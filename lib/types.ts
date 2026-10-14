@@ -29,6 +29,16 @@ export type PlayerDraft = {
   model: ModelType;
   poseId: string;
   joints: Joints;
+  clip: ClipId;
+  clipSpeed: number;
+  showOuter: boolean;
+  layerMode: LayerMode;
+  position: {
+    x: number;
+    y: number;
+    z: number;
+  };
+  scale: number;
   nametag: string;
   bubble: string;
 };
@@ -50,10 +60,6 @@ export type SceneDraft = {
   light: LightId;
   keyIntensity: number;
   formatId: string;
-  showOuter: boolean;
-  layerMode: LayerMode;
-  clip: ClipId;
-  clipSpeed: number;
 };
 
 export type CameraSnapshot = {

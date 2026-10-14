@@ -4,6 +4,16 @@ export function layerModeFrom(value: unknown): LayerMode {
   return value === "voxel" ? "voxel" : "flat";
 }
 
+const CLIP_IDS = new Set<ClipId>(["none", "idle", "walk", "run", "wave", "cheer"]);
+
+export function clipIdFrom(value: unknown, fallback: ClipId): ClipId {
+  return typeof value === "string" && CLIP_IDS.has(value as ClipId) ? (value as ClipId) : fallback;
+}
+
+function numberInRange(value: unknown, min: number, max: number, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max ? value : fallback;
+}
+
 export type SharePayload = {
   v: 1;
   activeId: string;
@@ -14,13 +24,40 @@ export type SharePayload = {
   light: SceneDraft["light"];
   keyIntensity: number;
   formatId: string;
-  showOuter: boolean;
-  layerMode?: SceneDraft["layerMode"];
+  /** Legacy scene-wide values kept for links created before per-player settings. */
+  showOuter?: boolean;
+  layerMode?: LayerMode;
   clip?: ClipId;
   clipSpeed?: number;
   camera?: CameraSnapshot;
-  players: Array<Omit<PlayerDraft, "skinUrl" | "capeUrl"> & { skinUrl?: string; capeUrl?: string | null }>;
+  players: PlayerPayload[];
 };
+
+export type PlayerPayload = Omit<
+  PlayerDraft,
+  "skinUrl" | "capeUrl" | "clip" | "clipSpeed" | "showOuter" | "layerMode" | "position" | "scale"
+> & {
+  skinUrl?: string;
+  capeUrl?: string | null;
+  clip?: ClipId;
+  clipSpeed?: number;
+  showOuter?: boolean;
+  layerMode?: LayerMode;
+  position?: Partial<PlayerDraft["position"]>;
+  scale?: number;
+};
+
+export function playerSettingsFromPayload(
+  player: PlayerPayload,
+  payload: Pick<SharePayload, "clip" | "clipSpeed" | "showOuter" | "layerMode">,
+) {
+  return {
+    clip: clipIdFrom(player.clip, clipIdFrom(payload.clip, "none")),
+    clipSpeed: numberInRange(player.clipSpeed, 0.25, 3, numberInRange(payload.clipSpeed, 0.25, 3, 1)),
+    showOuter: player.showOuter ?? payload.showOuter ?? true,
+    layerMode: layerModeFrom(player.layerMode ?? payload.layerMode),
+  };
+}
 
 const JOINT_KEYS: (keyof Joints)[] = [
   "headX",
@@ -49,10 +86,6 @@ export function toPayload(scene: SceneDraft, camera: CameraSnapshot | undefined,
     light: scene.light,
     keyIntensity: scene.keyIntensity,
     formatId: scene.formatId,
-    showOuter: scene.showOuter,
-    layerMode: scene.layerMode,
-    clip: scene.clip,
-    clipSpeed: scene.clipSpeed,
     camera,
     players: scene.players.map((player) => ({
       id: player.id,
@@ -62,6 +95,12 @@ export function toPayload(scene: SceneDraft, camera: CameraSnapshot | undefined,
       model: player.model,
       poseId: player.poseId,
       joints: player.joints,
+      clip: player.clip,
+      clipSpeed: player.clipSpeed,
+      showOuter: player.showOuter,
+      layerMode: player.layerMode,
+      position: { ...player.position },
+      scale: player.scale,
       nametag: player.nametag,
       bubble: player.bubble,
       showCape: player.showCape,

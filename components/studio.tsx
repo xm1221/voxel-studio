@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createAlexSkin, createSteveSkin } from "@/lib/defaults";
 import { StudioEngine } from "@/lib/engine";
 import { FORMATS, formatById, gifFrameSize } from "@/lib/formats";
-import { CLIPS, clipExportSpan } from "@/lib/motion";
+import { CLIPS, clipExportSpanForPlayers } from "@/lib/motion";
 import { decodePayload, encodePayload, toPayload } from "@/lib/persist";
 import { POSES } from "@/lib/poses";
 import { PRESET_STORAGE_KEY, mergePresets, newPresetId, parsePresetDocument, presetDocument, type UserPreset } from "@/lib/presets";
@@ -79,6 +79,8 @@ export function Studio() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [dropping, setDropping] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [moveMode, setMoveMode] = useState(false);
   const [fatal, setFatal] = useState<string | null>(null);
   const [presets, setPresets] = useState<UserPreset[]>(() => {
     if (typeof window === "undefined") return [];
@@ -122,6 +124,7 @@ export function Studio() {
     bootRefetch = next.refetch;
     return next.scene;
   });
+  const active = scene?.players.find((player) => player.id === scene.activeId) ?? scene?.players[0];
 
   useEffect(() => {
     sceneRef.current = scene;
@@ -185,6 +188,28 @@ export function Studio() {
   }, [scene]);
 
   useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.setTransformHandler((id, position) => {
+      setScene((current) =>
+        current
+          ? {
+              ...current,
+              players: current.players.map((player) =>
+                player.id === id ? { ...player, position: { ...player.position, x: position.x, z: position.z } } : player,
+              ),
+            }
+          : current,
+      );
+    });
+    return () => engine.setTransformHandler(null);
+  }, []);
+
+  useEffect(() => {
+    engineRef.current?.setMoveTarget(moveMode ? active?.id ?? null : null);
+  }, [active?.id, moveMode]);
+
+  useEffect(() => {
     if (!message && !error) return;
     const handle = window.setTimeout(() => {
       setMessage(null);
@@ -192,8 +217,6 @@ export function Studio() {
     }, 4200);
     return () => window.clearTimeout(handle);
   }, [message, error]);
-
-  const active = scene?.players.find((player) => player.id === scene.activeId) ?? scene?.players[0];
 
   const poseName = useMemo(() => {
     if (!active) return "";
@@ -352,7 +375,20 @@ export function Studio() {
     }
     if (!loaded.length) return;
     patch((current) => {
-      const players = current.players.map((player) => (player.id === current.activeId ? { ...loaded[0], id: player.id, poseId: player.poseId, joints: player.joints, nametag: player.nametag, bubble: player.bubble } : player));
+      const players = current.players.map((player) =>
+        player.id === current.activeId
+          ? {
+              ...player,
+              name: loaded[0].name,
+              source: loaded[0].source,
+              username: loaded[0].username,
+              skinUrl: loaded[0].skinUrl,
+              capeUrl: null,
+              showCape: true,
+              model: loaded[0].model,
+            }
+          : player,
+      );
       for (const extra of loaded.slice(1)) {
         if (players.length >= 4) break;
         players.push(extra);
@@ -391,7 +427,7 @@ export function Studio() {
     if (!scene || !engineRef.current) return;
     const format = formatById(scene.formatId);
     const size = gifFrameSize(format);
-    const span = clipExportSpan(scene.clip);
+    const span = clipExportSpanForPlayers(scene.players);
     setBusy(true);
     try {
       const blob = await engineRef.current.captureClip({
@@ -406,7 +442,7 @@ export function Studio() {
       const url = URL.createObjectURL(blob);
       link.href = url;
       const who = (active?.name || "skin").toLowerCase().replace(/[^a-z0-9_-]+/gi, "-");
-      link.download = `pixelstage-${who}-${scene.clip}.gif`;
+      link.download = `pixelstage-${who}-${scene.players.length > 1 ? "players" : active?.clip ?? "clip"}.gif`;
       link.click();
       URL.revokeObjectURL(url);
       setMessage(`已导出 ${size.width}×${size.height} 的 GIF。`);
@@ -458,7 +494,7 @@ export function Studio() {
             取皮肤
           </button>
         </form>
-        <div className="actions">
+        <div className="actions desktop-actions">
           <button className="btn ghost" type="button" onClick={() => { const skins = ensureSkins(); if (skins) updateActive({ name: "Steve", source: "builtin", username: null, skinUrl: skins.steve, capeUrl: null, model: "default" }); }}>
             Steve
           </button>
@@ -481,6 +517,15 @@ export function Studio() {
             {busy ? "处理中…" : "下载"}
           </button>
         </div>
+        <button
+          className="btn ghost mobile-menu"
+          type="button"
+          aria-expanded={drawerOpen}
+          aria-controls="studio-drawer"
+          onClick={() => setDrawerOpen((open) => !open)}
+        >
+          {drawerOpen ? "收起" : "面板"}
+        </button>
         <input
           ref={fileRef}
           hidden
@@ -511,14 +556,53 @@ export function Studio() {
         >
           {error ? <div className="toast error">{error}</div> : message ? <div className="toast">{message}</div> : null}
           <div className="hud">
-            <span>拖拽旋转</span>
-            <span>滚轮缩放</span>
-            <span>把 PNG 丢进来</span>
+            <span>{moveMode ? "拖动角色" : "拖拽旋转"}</span>
+            <span>双指缩放</span>
           </div>
         </div>
-        <aside className="aside">
+        <button
+          type="button"
+          className={drawerOpen ? "drawer-backdrop show" : "drawer-backdrop"}
+          aria-label="关闭控制面板"
+          onClick={() => setDrawerOpen(false)}
+        />
+        <aside id="studio-drawer" className={drawerOpen ? "aside open" : "aside"}>
           {scene && active ? (
             <>
+              <div className="drawer-head">
+                <strong>控制面板</strong>
+                <button className="btn ghost" type="button" onClick={() => setDrawerOpen(false)}>
+                  关闭
+                </button>
+              </div>
+              <section className="block mobile-tools">
+                <h2>取皮肤</h2>
+                <div className="row">
+                  <button className="btn ghost" type="button" onClick={() => { const skins = ensureSkins(); if (skins) updateActive({ name: "Steve", source: "builtin", username: null, skinUrl: skins.steve, capeUrl: null, model: "default" }); }}>
+                    Steve
+                  </button>
+                  <button className="btn ghost" type="button" onClick={() => { const skins = ensureSkins(); if (skins) updateActive({ name: "Alex", source: "builtin", username: null, skinUrl: skins.alex, capeUrl: null, model: "slim" }); }}>
+                    Alex
+                  </button>
+                  <button className="btn ghost" type="button" onClick={() => fileRef.current?.click()}>
+                    上传
+                  </button>
+                  <button className="btn ghost" type="button" onClick={() => void share()}>
+                    复制链接
+                  </button>
+                </div>
+                <div className="row" style={{ marginTop: 8 }}>
+                  <button className="btn" type="button" disabled={busy} onClick={() => void download(true)}>
+                    透明 PNG
+                  </button>
+                  <button className="btn" type="button" disabled={busy || !scene} onClick={() => void downloadGif()}>
+                    {busy ? "处理中…" : "导出 GIF"}
+                  </button>
+                  <button className="btn primary" type="button" disabled={busy || !scene} onClick={() => void download(false)}>
+                    {busy ? "处理中…" : "下载"}
+                  </button>
+                </div>
+              </section>
               <section className="block">
                 <h2>角色</h2>
                 <div className="player-list">
@@ -571,7 +655,6 @@ export function Studio() {
                     头像机位
                   </button>
                 </div>
-                <p className="hint">最多四个人。披风会跟着正版账号一起下来。</p>
                 {active.capeUrl ? (
                   <div className="row" style={{ marginTop: 8 }}>
                     <button className={active.showCape ? "chip active" : "chip"} type="button" onClick={() => updateActive({ showCape: !active.showCape })}>
@@ -579,6 +662,52 @@ export function Studio() {
                     </button>
                   </div>
                 ) : null}
+              </section>
+
+              <section className="block">
+                <h2>位置</h2>
+                <div className="row">
+                  <button className={moveMode ? "chip active" : "chip"} type="button" onClick={() => setMoveMode((value) => !value)}>
+                    {moveMode ? "移动中" : "移动角色"}
+                  </button>
+                  <button className="btn ghost" type="button" onClick={() => updateActive({ position: { x: 0, y: 0, z: 0 }, scale: 1 })}>
+                    归位
+                  </button>
+                </div>
+                <div className="sliders" style={{ marginTop: 10 }}>
+                  {([
+                    ["x", "左右", -32, 32, 0.1],
+                    ["y", "高度", -12, 16, 0.1],
+                    ["z", "前后", -32, 32, 0.1],
+                  ] as const).map(([key, label, min, max, step]) => (
+                    <label className="slider" key={key}>
+                      <span>{label}</span>
+                      <input
+                        type="range"
+                        min={min}
+                        max={max}
+                        step={step}
+                        value={active.position[key]}
+                        aria-label={`${label}位置`}
+                        onChange={(event) => updateActive({ position: { ...active.position, [key]: Number(event.target.value) } })}
+                      />
+                      <strong>{active.position[key].toFixed(1)}</strong>
+                    </label>
+                  ))}
+                  <label className="slider">
+                    <span>缩放</span>
+                    <input
+                      type="range"
+                      min={0.5}
+                      max={1.6}
+                      step={0.05}
+                      value={active.scale}
+                      aria-label="角色缩放"
+                      onChange={(event) => updateActive({ scale: Number(event.target.value) })}
+                    />
+                    <strong>{active.scale.toFixed(2)}</strong>
+                  </label>
+                </div>
               </section>
 
               <section className="block">
@@ -595,10 +724,6 @@ export function Studio() {
                     </button>
                   ))}
                 </div>
-                <p className="hint">
-                  {POSES.find((pose) => pose.id === active.poseId)?.hint ??
-                    (presets.some((preset) => `user:${preset.id}` === active.poseId) ? "这是你存的姿势。" : "滑块已经离开预设，肘和膝还按你拉的角度弯。")}
-                </p>
                 <div className="preset-tools">
                   <label className="field">
                     <span>存成我的姿势</span>
@@ -660,9 +785,7 @@ export function Studio() {
                         </div>
                       ))}
                     </div>
-                  ) : (
-                    <p className="hint">保存在这台浏览器里。导出的 JSON 可以再贴回来。</p>
-                  )}
+                  ) : null}
                   <label className="field">
                     <span>粘贴 JSON</span>
                     <textarea className="preset-json" value={presetJson} aria-label="姿势 JSON" placeholder='{"v":1,"presets":[]}' onChange={(event) => setPresetJson(event.target.value)} />
@@ -695,8 +818,8 @@ export function Studio() {
                     <button
                       key={clip.id}
                       type="button"
-                      className={scene.clip === clip.id ? "pose active" : "pose"}
-                      onClick={() => patch((current) => ({ ...current, clip: clip.id }))}
+                      className={active.clip === clip.id ? "pose active" : "pose"}
+                      onClick={() => updateActive({ clip: clip.id })}
                     >
                       {clip.name}
                     </button>
@@ -711,8 +834,8 @@ export function Studio() {
                     <button
                       key={label}
                       type="button"
-                      className={scene.clipSpeed === speed ? "chip active" : "chip"}
-                      onClick={() => patch((current) => ({ ...current, clipSpeed: Number(speed) }))}
+                      className={active.clipSpeed === speed ? "chip active" : "chip"}
+                      onClick={() => updateActive({ clipSpeed: Number(speed) })}
                     >
                       {label}
                     </button>
@@ -721,9 +844,27 @@ export function Studio() {
                     导出 GIF
                   </button>
                 </div>
-                <p className="hint">
-                  {CLIPS.find((clip) => clip.id === scene.clip)?.hint} 动图跟着当前比例，长边 480。
-                </p>
+              </section>
+
+              <section className="block">
+                <h2>外层</h2>
+                <div className="row">
+                  <button type="button" className={active.showOuter ? "chip active" : "chip"} onClick={() => updateActive({ showOuter: !active.showOuter })}>
+                    第二层
+                  </button>
+                  <button
+                    type="button"
+                    className={active.layerMode === "voxel" ? "chip active" : "chip"}
+                    onClick={() =>
+                      updateActive({
+                        layerMode: active.layerMode === "voxel" ? "flat" : "voxel",
+                        showOuter: active.layerMode === "voxel" ? active.showOuter : true,
+                      })
+                    }
+                  >
+                    3D 外层
+                  </button>
+                </div>
               </section>
 
               <section className="block">
@@ -801,24 +942,7 @@ export function Studio() {
                   <button type="button" className={scene.godrays ? "chip active" : "chip"} onClick={() => patch((current) => ({ ...current, godrays: !current.godrays }))}>
                     体积光
                   </button>
-                  <button type="button" className={scene.showOuter ? "chip active" : "chip"} onClick={() => patch((current) => ({ ...current, showOuter: !current.showOuter }))}>
-                    第二层
-                  </button>
-                  <button
-                    type="button"
-                    className={scene.layerMode === "voxel" ? "chip active" : "chip"}
-                    onClick={() =>
-                      patch((current) => ({
-                        ...current,
-                        layerMode: current.layerMode === "voxel" ? "flat" : "voxel",
-                        showOuter: current.layerMode === "voxel" ? current.showOuter : true,
-                      }))
-                    }
-                  >
-                    3D 外层
-                  </button>
                 </div>
-                <p className="hint">3D 外层把帽子、外套、袖子和裤子的第二层皮肤挤成一格一格的方块，透明的像素会空出来。</p>
               </section>
 
               <section className="block">
@@ -842,7 +966,6 @@ export function Studio() {
                     </button>
                   ))}
                 </div>
-                <p className="hint">尺寸按平台规格取整。下载会按当前机位重渲再缩小。GIF 用同一比例，长边收到 480。4K 在较弱的设备上可能失败，那时用桌面尺寸。</p>
               </section>
             </>
           ) : (

@@ -67,6 +67,7 @@ export async function captureClip(
   const saved = snapshotWorld(host);
   const spin = host.holder.rotation.y;
   const rigs = [...host.rigs];
+  const allStill = draft.players.every((player) => player.clip === "none");
   const rings = rigs.map((rig) => rig.ring.visible);
   const output = document.createElement("canvas");
   output.width = options.width;
@@ -87,7 +88,7 @@ export async function captureClip(
     const delayCs = (options.seconds / options.frames) * 100;
     for (let frame = 0; frame < options.frames; frame += 1) {
       const time = (frame / options.frames) * options.seconds;
-      if (draft.clip === "none") {
+      if (allStill) {
         host.holder.rotation.y = (time / options.seconds) * Math.PI * 2;
         host.poseAll(0);
       } else {

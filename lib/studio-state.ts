@@ -1,7 +1,6 @@
-import { clipById } from "./motion";
 import { withBasePath } from "./paths";
 import { poseById } from "./poses";
-import { layerModeFrom, type SharePayload } from "./persist";
+import { playerSettingsFromPayload, type SharePayload } from "./persist";
 import type { CameraSnapshot, PlayerDraft, SceneDraft } from "./types";
 
 export const STORAGE_KEY = "pixelstage.v1";
@@ -19,6 +18,12 @@ export function makePlayer(partial: Partial<PlayerDraft> & Pick<PlayerDraft, "na
     showCape: true,
     poseId: "idle",
     joints: poseById("idle").joints,
+    clip: "idle",
+    clipSpeed: 1,
+    showOuter: true,
+    layerMode: "flat",
+    position: { x: 0, y: 0, z: 0 },
+    scale: 1,
     nametag: "",
     bubble: "",
     ...partial,
@@ -37,16 +42,21 @@ export function defaultScene(steve: string): SceneDraft {
     light: "soft",
     keyIntensity: 1,
     formatId: "youtube",
-    showOuter: true,
-    layerMode: "flat",
-    clip: "idle",
-    clipSpeed: 1,
   };
+}
+
+function numberInRange(value: unknown, min: number, max: number, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max ? value : fallback;
+}
+
+function positionPart(value: unknown, fallback: number, min: number, max: number) {
+  return numberInRange(value, min, max, fallback);
 }
 
 export function sceneFromPayload(payload: SharePayload, steve: string, alex: string): { scene: SceneDraft; camera?: CameraSnapshot; refetch: string[] } {
   const refetch: string[] = [];
   const players = payload.players.slice(0, 4).map((player) => {
+    const settings = playerSettingsFromPayload(player, payload);
     let skinUrl = player.skinUrl || "";
     if (player.source === "builtin") {
       skinUrl = player.name === "Alex" ? alex : steve;
@@ -67,6 +77,13 @@ export function sceneFromPayload(payload: SharePayload, steve: string, alex: str
       model: player.model === "slim" ? "slim" : "default",
       poseId: player.poseId || "idle",
       joints: player.joints,
+      ...settings,
+      position: {
+        x: positionPart(player.position?.x, 0, -32, 32),
+        y: positionPart(player.position?.y, 0, -12, 16),
+        z: positionPart(player.position?.z, 0, -32, 32),
+      },
+      scale: numberInRange(player.scale, 0.5, 1.6, 1),
       nametag: player.nametag || "",
       bubble: player.bubble || "",
     } satisfies PlayerDraft;
@@ -85,10 +102,6 @@ export function sceneFromPayload(payload: SharePayload, steve: string, alex: str
       light: payload.light || "soft",
       keyIntensity: typeof payload.keyIntensity === "number" ? payload.keyIntensity : 1,
       formatId: payload.formatId || "youtube",
-      showOuter: payload.showOuter !== false,
-      layerMode: layerModeFrom(payload.layerMode),
-      clip: clipById(payload.clip),
-      clipSpeed: typeof payload.clipSpeed === "number" && payload.clipSpeed > 0 ? payload.clipSpeed : 1,
     },
   };
 }

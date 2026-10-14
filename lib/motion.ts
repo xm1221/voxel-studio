@@ -1,4 +1,4 @@
-import type { Joints } from "./types";
+import type { Joints, PlayerDraft } from "./types";
 
 /** 动作相位对齐 skinview3d 的行走 / 跑步，并在肘、膝上加随摆动弯曲。 */
 export type ClipId = "none" | "idle" | "walk" | "run" | "wave" | "cheer";
@@ -41,6 +41,20 @@ export function clipExportSpan(clip: ClipId): { frames: number; seconds: number 
   const cycle = clipCycle(clip);
   const seconds = clip === "walk" || clip === "run" ? cycle * 2 : cycle;
   const frames = clip === "none" ? 24 : Math.min(28, Math.max(12, Math.round(seconds * 12)));
+  return { frames, seconds };
+}
+
+export function clipExportSpanForPlayers(players: Array<Pick<PlayerDraft, "clip" | "clipSpeed">>): { frames: number; seconds: number } {
+  if (!players.length) return clipExportSpan("none");
+  const seconds = Math.max(
+    ...players.map((player) => {
+      const span = clipExportSpan(player.clip);
+      const speed = Number.isFinite(player.clipSpeed) && player.clipSpeed > 0 ? player.clipSpeed : 1;
+      return span.seconds / speed;
+    }),
+  );
+  const allStill = players.every((player) => player.clip === "none");
+  const frames = allStill ? 24 : Math.min(28, Math.max(12, Math.round(seconds * 12)));
   return { frames, seconds };
 }
 

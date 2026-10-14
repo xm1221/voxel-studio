@@ -7,6 +7,7 @@ import {
   PerspectiveCamera,
   Scene,
   SRGBColorSpace,
+  Vector3,
   WebGLRenderer,
   type Material,
 } from "three";
@@ -44,10 +45,18 @@ export class StudioEngine {
   private frame = 0;
   private observer: ResizeObserver;
   private draft: SceneDraft | null = null;
-  private clipTime = 0;
-  private lastClip = "";
   private lastTick = 0;
   private held = false;
+  private moveTarget: string | null = null;
+  private transformHandler: ((id: string, position: { x: number; z: number }) => void) | null = null;
+  private drag:
+    | {
+        pointerId: number;
+        startX: number;
+        startY: number;
+        startPosition: { x: number; z: number };
+      }
+    | null = null;
   private readonly shown = new Map<string, ClipSampleState>();
 
   constructor(container: HTMLElement) {
@@ -66,6 +75,10 @@ export class StudioEngine {
     canvas.style.touchAction = "none";
     canvas.setAttribute("aria-label", "皮肤预览");
     container.appendChild(canvas);
+    canvas.addEventListener("pointerdown", this.onPointerDown);
+    canvas.addEventListener("pointermove", this.onPointerMove);
+    canvas.addEventListener("pointerup", this.onPointerUp);
+    canvas.addEventListener("pointercancel", this.onPointerUp);
 
     this.camera = new PerspectiveCamera(32, 1, 0.1, 400);
     this.camera.position.set(26, 10, 64);
@@ -108,6 +121,53 @@ export class StudioEngine {
     this.loop();
   }
 
+  private onPointerDown = (event: PointerEvent) => {
+    if (!this.moveTarget || event.button !== 0) return;
+    const player = this.draft?.players.find((item) => item.id === this.moveTarget);
+    if (!player) return;
+    event.preventDefault();
+    this.drag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startPosition: { x: player.position.x, z: player.position.z },
+    };
+    this.renderer.domElement.setPointerCapture(event.pointerId);
+    this.renderer.domElement.style.cursor = "grabbing";
+  };
+
+  private onPointerMove = (event: PointerEvent) => {
+    if (!this.drag || this.drag.pointerId !== event.pointerId) return;
+    const id = this.moveTarget;
+    if (!id) return;
+    event.preventDefault();
+    const canvas = this.renderer.domElement;
+    const height = Math.max(canvas.clientHeight, 1);
+    const distance = this.camera.position.distanceTo(this.controls.target);
+    const unit = (2 * distance * Math.tan((this.camera.fov * Math.PI) / 360)) / height;
+    const right = new Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
+    right.y = 0;
+    right.normalize();
+    const forward = this.camera.getWorldDirection(new Vector3());
+    forward.y = 0;
+    forward.normalize();
+    const dx = event.clientX - this.drag.startX;
+    const dy = event.clientY - this.drag.startY;
+    const clamp = (value: number) => Math.max(-32, Math.min(32, value));
+    this.transformHandler?.(id, {
+      x: clamp(this.drag.startPosition.x + dx * unit * right.x - dy * unit * forward.x),
+      z: clamp(this.drag.startPosition.z + dx * unit * right.z - dy * unit * forward.z),
+    });
+  };
+
+  private onPointerUp = (event: PointerEvent) => {
+    if (!this.drag || this.drag.pointerId !== event.pointerId) return;
+    const canvas = this.renderer.domElement;
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    this.drag = null;
+    canvas.style.cursor = this.moveTarget ? "grab" : "default";
+  };
+
   private loop = () => {
     this.frame = requestAnimationFrame(this.loop);
     if (this.held) return;
@@ -134,10 +194,6 @@ export class StudioEngine {
   };
 
   sync(draft: SceneDraft) {
-    if (draft.clip !== this.lastClip) {
-      this.clipTime = 0;
-      this.lastClip = draft.clip;
-    }
     this.draft = draft;
     const ids = new Set(draft.players.map((player) => player.id));
     for (const [id, rig] of this.rigs) {
@@ -162,7 +218,7 @@ export class StudioEngine {
         this.rigs.set(player.id, rig);
       }
       rig.ring.visible = player.id === draft.activeId;
-      applyLook(rig, draft.grade, draft.outline, draft.showOuter, draft.layerMode);
+      applyLook(rig, draft.grade, draft.outline, player.showOuter, player.layerMode);
       this.applyLabels(rig, player.nametag, player.bubble);
       if (player.skinUrl && rig.skinUrl !== player.skinUrl) {
         const token = ++rig.token;
@@ -187,31 +243,38 @@ export class StudioEngine {
   private poseAll(dt: number, exactTime?: number) {
     const draft = this.draft;
     if (!draft) return;
-    const speed = Number.isFinite(draft.clipSpeed) && draft.clipSpeed > 0 ? draft.clipSpeed : 1;
-    if (exactTime === undefined && draft.clip !== "none") this.clipTime += dt * speed;
-    const time = exactTime ?? this.clipTime;
-    const follow = exactTime === undefined ? 1 - Math.exp(-(draft.clip === "none" ? 12 : 18) * Math.max(dt, 0)) : 1;
     draft.players.forEach((player, index) => {
       const rig = this.rigs.get(player.id);
       if (!rig) return;
-      const sampled = sampleClip(draft.clip, time + phaseOffset(index, draft.clip), player.joints);
+      const clipChanged = rig.lastClip !== player.clip;
+      if (clipChanged) {
+        rig.lastClip = player.clip;
+        rig.clipTime = 0;
+      }
+      const speed = Number.isFinite(player.clipSpeed) && player.clipSpeed > 0 ? player.clipSpeed : 1;
+      if (exactTime === undefined && player.clip !== "none") rig.clipTime += dt * speed;
+      const time = exactTime === undefined ? rig.clipTime : exactTime * speed;
+      const sampled = sampleClip(player.clip, time + phaseOffset(index, player.clip), player.joints);
       let shown = this.shown.get(player.id);
-      if (!shown || exactTime !== undefined) {
+      if (!shown || exactTime !== undefined || clipChanged) {
         shown = { joints: { ...sampled.joints }, bob: sampled.bob, sway: sampled.sway, roll: sampled.roll, cape: sampled.cape, ready: true };
         if (exactTime === undefined) this.shown.set(player.id, shown);
-      } else if (follow > 0) {
-        const mix = (current: number, target: number) => current + (target - current) * follow;
-        const joints = shown.joints;
-        (Object.keys(joints) as (keyof Joints)[]).forEach((key) => {
-          joints[key] = mix(joints[key], sampled.joints[key]);
-        });
-        shown.bob = mix(shown.bob, sampled.bob);
-        shown.sway = mix(shown.sway, sampled.sway);
-        shown.roll = mix(shown.roll, sampled.roll);
-        shown.cape = mix(shown.cape, sampled.cape);
+      } else {
+        const follow = 1 - Math.exp(-(player.clip === "none" ? 12 : 18) * Math.max(dt, 0));
+        if (follow > 0) {
+          const mix = (current: number, target: number) => current + (target - current) * follow;
+          const joints = shown.joints;
+          (Object.keys(joints) as (keyof Joints)[]).forEach((key) => {
+            joints[key] = mix(joints[key], sampled.joints[key]);
+          });
+          shown.bob = mix(shown.bob, sampled.bob);
+          shown.sway = mix(shown.sway, sampled.sway);
+          shown.roll = mix(shown.roll, sampled.roll);
+          shown.cape = mix(shown.cape, sampled.cape);
+        }
       }
       const x = (index - (draft.players.length - 1) / 2) * 22;
-      applyJoints(rig, shown.joints, x, shown);
+      applyJoints(rig, shown.joints, x, shown, player);
     });
   }
 
@@ -280,7 +343,8 @@ export class StudioEngine {
       material.needsUpdate = true;
     }
     this.rebuildVoxels(rig, canvas);
-    if (this.draft) applyLook(rig, this.draft.grade, this.draft.outline, this.draft.showOuter, this.draft.layerMode);
+    const player = this.draft?.players.find((item) => item.id === rig.id);
+    if (this.draft && player) applyLook(rig, this.draft.grade, this.draft.outline, player.showOuter, player.layerMode);
   }
 
   private rebuildVoxels(rig: Rig, canvas: HTMLCanvasElement) {
@@ -343,6 +407,21 @@ export class StudioEngine {
     } catch {
       if (rig.capeToken === token) rig.cape.visible = false;
     }
+  }
+
+  setMoveTarget(id: string | null) {
+    this.moveTarget = id;
+    this.controls.enabled = !id;
+    this.renderer.domElement.style.cursor = id ? "grab" : "default";
+    if (!id && this.drag) {
+      const canvas = this.renderer.domElement;
+      if (canvas.hasPointerCapture(this.drag.pointerId)) canvas.releasePointerCapture(this.drag.pointerId);
+      this.drag = null;
+    }
+  }
+
+  setTransformHandler(handler: ((id: string, position: { x: number; z: number }) => void) | null) {
+    this.transformHandler = handler;
   }
 
   frameBody(count: number) {
@@ -415,10 +494,15 @@ export class StudioEngine {
     cancelAnimationFrame(this.frame);
     this.observer.disconnect();
     this.controls.dispose();
+    const canvas = this.renderer.domElement;
+    canvas.removeEventListener("pointerdown", this.onPointerDown);
+    canvas.removeEventListener("pointermove", this.onPointerMove);
+    canvas.removeEventListener("pointerup", this.onPointerUp);
+    canvas.removeEventListener("pointercancel", this.onPointerUp);
     for (const rig of this.rigs.values()) this.disposeRig(rig);
     this.gradient.dispose();
     this.stage.dispose();
     this.renderer.dispose();
-    this.renderer.domElement.remove();
+    canvas.remove();
   }
 }
