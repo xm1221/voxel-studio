@@ -29,6 +29,10 @@ npm start
 
 最多四个人同时站在场景里。正版披风会跟着账号一起下来。
 
+## 部署
+
+生产环境挂在 `/mcrender`。构建和 Cloudflare Workers 的步骤写在 [DEPLOY.md](DEPLOY.md)。
+
 ## 许可
 
 本仓库以 [MIT License](LICENSE) 发布。
