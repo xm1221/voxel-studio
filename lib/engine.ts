@@ -147,10 +147,16 @@ export class StudioEngine {
     const unit = (2 * distance * Math.tan((this.camera.fov * Math.PI) / 360)) / height;
     const right = new Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0);
     right.y = 0;
-    right.normalize();
+    if (right.lengthSq() < 1e-8) right.set(1, 0, 0);
+    else right.normalize();
     const forward = this.camera.getWorldDirection(new Vector3());
     forward.y = 0;
-    forward.normalize();
+    if (forward.lengthSq() < 1e-8) {
+      forward.setFromMatrixColumn(this.camera.matrixWorld, 1);
+      forward.y = 0;
+    }
+    if (forward.lengthSq() < 1e-8) forward.set(0, 0, -1);
+    else forward.normalize();
     const dx = event.clientX - this.drag.startX;
     const dy = event.clientY - this.drag.startY;
     const clamp = (value: number) => Math.max(-32, Math.min(32, value));
