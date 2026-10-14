@@ -199,18 +199,6 @@ function addBox(
   return mesh;
 }
 
-/** Drop one box face so the joint cap is not a second surface. Face order matches setUVs. */
-function dropFace(geometry: BoxGeometry, face: number) {
-  const index = geometry.getIndex();
-  if (!index) return;
-  const next: number[] = [];
-  for (let i = 0; i < index.count; i += 1) {
-    if (Math.floor(i / 6) === face) continue;
-    next.push(index.getX(i));
-  }
-  geometry.setIndex(next);
-}
-
 function buildRig(model: ModelType, gradient: Texture): Rig {
   const slim = model === "slim";
   const armW = slim ? 3 : 4;
@@ -280,25 +268,47 @@ function buildRig(model: ModelType, gradient: Texture): Rig {
     ou: number,
     ov: number,
     topY: number,
+    fold: 1 | -1,
   ) => {
     const jointY = topY - 6;
     const endY = topY - 11.65;
-    const overlap = 2.4;
-    const upperH = topY - (jointY - overlap);
-    const upperCenter = (topY + jointY - overlap) / 2;
-    const lowerH = jointY + overlap - endY;
-    const lowerCenter = (jointY + overlap + endY) / 2;
+    const kiss = 0.08;
+    const upperH = 6 + kiss;
+    const upperCenter = (topY + jointY - kiss) / 2;
+    const lowerH = jointY + kiss - endY;
+    const lowerCenter = (jointY + kiss + endY) / 2;
+    const shell = 0.5;
+    const outerW = width + shell;
+    const outerD = depth + shell;
     const pivot = new Group();
-    pivot.position.y = jointY;
+    // Hinge on the outside of the fold: elbows bend forward, knees bend back.
+    pivot.position.set(0, jointY, (fold * depth) / 2);
     anchor.add(pivot);
-    const upper = addBox(anchor, rigBase, width, upperH, depth, { u, v, w: width, h: 8, d: depth, side: 0, texW: 64, texH: 64 }, limb, "limb", [0, upperCenter, 0]);
-    const upperOuter = addBox(anchor, rigBase, width + 0.5, upperH + 0.3, depth + 0.5, { u: ou, v: ov, w: width, h: 8, d: depth, side: 0, texW: 64, texH: 64 }, outerLimb, "outerLimb", [0, upperCenter, 0]);
-    const lower = addBox(pivot, rigBase, width, lowerH, depth, { u, v, w: width, h: 8, d: depth, side: 4, texW: 64, texH: 64 }, limbJoint, "limbJoint", [0, lowerCenter - jointY, 0]);
-    const lowerOuter = addBox(pivot, rigBase, width + 0.5, lowerH + 0.3, depth + 0.5, { u: ou, v: ov, w: width, h: 8, d: depth, side: 4, texW: 64, texH: 64 }, outerJoint, "outerJoint", [0, lowerCenter - jointY, 0]);
-    dropFace(upper.geometry as BoxGeometry, 3);
-    dropFace(upperOuter.geometry as BoxGeometry, 3);
-    dropFace(lower.geometry as BoxGeometry, 2);
-    dropFace(lowerOuter.geometry as BoxGeometry, 2);
+    const upper = addBox(anchor, rigBase, width, upperH, depth, { u, v, w: width, h: 6, d: depth, side: 0, texW: 64, texH: 64 }, limb, "limb", [0, upperCenter, 0]);
+    const upperOuter = addBox(
+      anchor,
+      rigBase,
+      outerW,
+      upperH + shell * 0.5,
+      outerD,
+      { u: ou, v: ov, w: width, h: 6, d: depth, side: 0, texW: 64, texH: 64 },
+      outerLimb,
+      "outerLimb",
+      [0, upperCenter + shell * 0.25, (-fold * shell) / 2],
+    );
+    const lower = addBox(pivot, rigBase, width, lowerH, depth, { u, v, w: width, h: 6, d: depth, side: 6, texW: 64, texH: 64 }, limbJoint, "limbJoint", [0, lowerCenter - jointY, (-fold * depth) / 2]);
+    const lowerOuterH = lowerH + shell * 0.5;
+    const lowerOuter = addBox(
+      pivot,
+      rigBase,
+      outerW,
+      lowerOuterH,
+      outerD,
+      { u: ou, v: ov, w: width, h: 6, d: depth, side: 6, texW: 64, texH: 64 },
+      outerJoint,
+      "outerJoint",
+      [0, kiss - lowerOuterH / 2, (-fold * outerD) / 2],
+    );
     return pivot;
   };
 
@@ -313,7 +323,7 @@ function buildRig(model: ModelType, gradient: Texture): Rig {
     const v = side === "right" ? 16 : 48;
     const ou = side === "right" ? 40 : 48;
     const ov = side === "right" ? 32 : 48;
-    return { shoulder, elbow: hinge(assembly, armW, 4, u, v, ou, ov, 2) };
+    return { shoulder, elbow: hinge(assembly, armW, 4, u, v, ou, ov, 2, 1) };
   };
 
   const right = makeArm("right");
@@ -327,7 +337,7 @@ function buildRig(model: ModelType, gradient: Texture): Rig {
     const v = side === "right" ? 16 : 48;
     const ou = side === "right" ? 0 : 0;
     const ov = side === "right" ? 32 : 48;
-    return { hip, knee: hinge(hip, 4, 4, u, v, ou, ov, 0) };
+    return { hip, knee: hinge(hip, 4, 4, u, v, ou, ov, 0, -1) };
   };
 
   const rightLeg = makeLeg("right");
