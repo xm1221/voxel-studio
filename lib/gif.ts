@@ -69,7 +69,8 @@ export function encodeGif(frames: GifFrame[], width: number, height: number): Ui
       const key = ((data[offset] >> 3) << 10) | ((data[offset + 1] >> 3) << 5) | (data[offset + 2] >> 3);
       indices[pixel] = lookup[key];
     }
-    const packed = transparent ? 0x05 : 0x04;
+    // Disposal method 2 (restore to background) stops ghosting on transparent GIFs.
+    const packed = transparent ? 0x09 : 0x08;
     const delay = Math.max(2, Math.round(frame.delayCs));
     push(0x21, 0xf9, 0x04, packed, delay & 255, (delay >> 8) & 255, 0x00, 0x00);
     push(0x2c, ...u16(0), ...u16(0), ...u16(width), ...u16(height), 0x00);
