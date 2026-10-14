@@ -26,7 +26,7 @@ import { buildBoxUVs, capFace, type UvRect } from "./uv";
 const DEG = Math.PI / 180;
 const CAPE_REST = 12;
 
-export type PartKind = "inner" | "limb" | "outer" | "outerLimb";
+export type PartKind = "inner" | "limb" | "limbLower" | "outer" | "outerLimb" | "outerLimbLower";
 
 export type Rig = {
   id: string;
@@ -46,12 +46,16 @@ export type Rig = {
   outlines: Mesh[];
   inner: MeshStandardMaterial;
   limb: MeshStandardMaterial;
+  limbLower: MeshStandardMaterial;
   outer: MeshStandardMaterial;
   outerLimb: MeshStandardMaterial;
+  outerLimbLower: MeshStandardMaterial;
   toonInner: MeshToonMaterial;
   toonLimb: MeshToonMaterial;
+  toonLimbLower: MeshToonMaterial;
   toonOuter: MeshToonMaterial;
   toonOuterLimb: MeshToonMaterial;
+  toonOuterLimbLower: MeshToonMaterial;
   outlineMat: MeshBasicMaterial;
   capeMat: MeshStandardMaterial;
   cape: Mesh;
@@ -72,33 +76,51 @@ export type Rig = {
   lastBubble: string;
 };
 
-function cutout(biased: boolean) {
+function cutout(factor: number, units: number) {
   const material = new MeshStandardMaterial({
     roughness: 0.94,
     metalness: 0,
     side: FrontSide,
     alphaTest: 0,
   });
-  if (biased) {
+  if (factor !== 0 || units !== 0) {
     material.polygonOffset = true;
-    material.polygonOffsetFactor = 1;
-    material.polygonOffsetUnits = 1;
+    material.polygonOffsetFactor = factor;
+    material.polygonOffsetUnits = units;
   }
   return material;
 }
 
-function toon(gradient: Texture, biased: boolean, outer: boolean) {
+function toon(gradient: Texture, factor: number, units: number, outer: boolean) {
   const material = new MeshToonMaterial({
     gradientMap: gradient,
     side: FrontSide,
     alphaTest: outer ? 0.5 : 0,
   });
-  if (biased) {
+  if (factor !== 0 || units !== 0) {
     material.polygonOffset = true;
-    material.polygonOffsetFactor = 1;
-    material.polygonOffsetUnits = 1;
+    material.polygonOffsetFactor = factor;
+    material.polygonOffsetUnits = units;
   }
   return material;
+}
+
+/** Pull a cut end inside the box so its lit edge is not a ring around the joint. */
+function sinkJointCap(geometry: BoxGeometry, face: number) {
+  const position = geometry.getAttribute("position");
+  const start = face * 4;
+  let ySum = 0;
+  for (let i = 0; i < 4; i += 1) ySum += position.getY(start + i);
+  const inward = ySum > 0 ? -0.55 : 0.55;
+  for (let i = 0; i < 4; i += 1) {
+    position.setXYZ(
+      start + i,
+      position.getX(start + i) * 0.62,
+      position.getY(start + i) + inward,
+      position.getZ(start + i) * 0.62,
+    );
+  }
+  position.needsUpdate = true;
 }
 
 function placeBox(
@@ -117,12 +139,14 @@ function placeBox(
   const uvs = buildBoxUVs(uv);
   if (cap) capFace(uvs, cap.face, cap.px, cap.py, uv.texW, uv.texH);
   geometry.setAttribute("uv", new BufferAttribute(uvs, 2));
+  if (cap) sinkJointCap(geometry, cap.face);
   const mesh = new Mesh(geometry, material);
   mesh.position.set(position[0], position[1], position[2]);
-  mesh.castShadow = kind === "inner" || kind === "limb";
+  const skinned = kind === "inner" || kind === "limb" || kind === "limbLower";
+  mesh.castShadow = skinned;
   parent.add(mesh);
   rig.parts.push({ mesh, kind });
-  if (kind === "inner" || kind === "limb") {
+  if (skinned) {
     const outline = new Mesh(geometry, rig.outlineMat);
     outline.position.copy(mesh.position);
     outline.scale.setScalar(1.05);
@@ -146,8 +170,11 @@ export function buildRig(model: ModelType, gradient: Texture): Rig {
   skin.position.y = 8;
   root.add(skin);
 
-  const inner = cutout(false);
-  const limb = cutout(true);
+  const inner = cutout(0, 0);
+  // The two 6px halves share a cross-section for 0.35px. Same-depth sides flicker,
+  // so the lower half is biased toward the camera and the upper half away from it.
+  const limb = cutout(1, 1);
+  const limbLower = cutout(-1, -1);
   const outer = new MeshStandardMaterial({
     roughness: 0.94,
     metalness: 0,
@@ -158,12 +185,18 @@ export function buildRig(model: ModelType, gradient: Texture): Rig {
   });
   const outerLimb = outer.clone();
   outerLimb.polygonOffset = true;
-  outerLimb.polygonOffsetFactor = -1;
-  outerLimb.polygonOffsetUnits = -1;
-  const toonInner = toon(gradient, false, false);
-  const toonLimb = toon(gradient, true, false);
-  const toonOuter = toon(gradient, false, true);
-  const toonOuterLimb = toon(gradient, true, true);
+  outerLimb.polygonOffsetFactor = -2;
+  outerLimb.polygonOffsetUnits = -2;
+  const outerLimbLower = outer.clone();
+  outerLimbLower.polygonOffset = true;
+  outerLimbLower.polygonOffsetFactor = -4;
+  outerLimbLower.polygonOffsetUnits = -4;
+  const toonInner = toon(gradient, 0, 0, false);
+  const toonLimb = toon(gradient, 1, 1, false);
+  const toonLimbLower = toon(gradient, -1, -1, false);
+  const toonOuter = toon(gradient, 0, 0, true);
+  const toonOuterLimb = toon(gradient, -2, -2, true);
+  const toonOuterLimbLower = toon(gradient, -4, -4, true);
   const outlineMat = new MeshBasicMaterial({ color: 0x14120f, side: BackSide });
 
   const rigBase = {
@@ -218,7 +251,7 @@ export function buildRig(model: ModelType, gradient: Texture): Rig {
     const elbow = new Group();
     elbow.position.y = ARM.elbowY;
     assembly.add(elbow);
-    placeBox(elbow, rigBase, armW, ARM.lowerH, ARM.depth, { u, v, w: armW, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, limb, "limb", [0, ARM.lowerY, 0], {
+    placeBox(elbow, rigBase, armW, ARM.lowerH, ARM.depth, { u, v, w: armW, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, limbLower, "limbLower", [0, ARM.lowerY, 0], {
       face: 2,
       ...lowerCap,
     });
@@ -229,8 +262,8 @@ export function buildRig(model: ModelType, gradient: Texture): Rig {
       6.35,
       4.5,
       { u: ou, v: ov, w: armW, h: 6, d: 4, side: 6, texW: 64, texH: 64 },
-      outerLimb,
-      "outerLimb",
+      outerLimbLower,
+      "outerLimbLower",
       [0, ARM.lowerY, 0],
       { face: 2, ...lowerCap },
     );
@@ -260,11 +293,11 @@ export function buildRig(model: ModelType, gradient: Texture): Rig {
     const knee = new Group();
     knee.position.y = LEG.kneeY;
     hip.add(knee);
-    placeBox(knee, rigBase, LEG.width, LEG.height, LEG.depth, { u, v, w: 4, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, limb, "limb", [0, LEG.lowerY, 0], {
+    placeBox(knee, rigBase, LEG.width, LEG.height, LEG.depth, { u, v, w: 4, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, limbLower, "limbLower", [0, LEG.lowerY, 0], {
       face: 2,
       ...lowerCap,
     });
-    placeBox(knee, rigBase, 4.5, 6.35, 4.5, { u: 0, v: ov, w: 4, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, outerLimb, "outerLimb", [0, LEG.lowerY, 0], {
+    placeBox(knee, rigBase, 4.5, 6.35, 4.5, { u: 0, v: ov, w: 4, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, outerLimbLower, "outerLimbLower", [0, LEG.lowerY, 0], {
       face: 2,
       ...lowerCap,
     });
@@ -349,12 +382,16 @@ export function buildRig(model: ModelType, gradient: Texture): Rig {
     outlines: rigBase.outlines,
     inner,
     limb,
+    limbLower,
     outer,
     outerLimb,
+    outerLimbLower,
     toonInner,
     toonLimb,
+    toonLimbLower,
     toonOuter,
     toonOuterLimb,
+    toonOuterLimbLower,
     outlineMat,
     capeMat,
     cape,

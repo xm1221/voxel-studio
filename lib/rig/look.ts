@@ -6,21 +6,23 @@ export function applyLook(rig: Rig, grade: GradeId, outline: OutlineId, showOute
   const materialFor = (kind: PartKind) => {
     if (kind === "inner") return comic ? rig.toonInner : rig.inner;
     if (kind === "limb") return comic ? rig.toonLimb : rig.limb;
+    if (kind === "limbLower") return comic ? rig.toonLimbLower : rig.limbLower;
     if (kind === "outer") return comic ? rig.toonOuter : rig.outer;
-    return comic ? rig.toonOuterLimb : rig.outerLimb;
+    if (kind === "outerLimb") return comic ? rig.toonOuterLimb : rig.outerLimb;
+    return comic ? rig.toonOuterLimbLower : rig.outerLimbLower;
   };
   for (const part of rig.parts) {
     part.mesh.material = materialFor(part.kind);
-    part.mesh.visible = showOuter || part.kind === "inner" || part.kind === "limb";
+    part.mesh.visible = showOuter || part.kind === "inner" || part.kind === "limb" || part.kind === "limbLower";
   }
-  const standards = [rig.inner, rig.limb, rig.outer, rig.outerLimb];
+  const standards = [rig.inner, rig.limb, rig.limbLower, rig.outer, rig.outerLimb, rig.outerLimbLower];
   for (const material of standards) {
     material.color.set(grade === "hologram" ? 0x9af6ff : grade === "ice" ? 0xd9f4ff : 0xffffff);
     material.emissive.set(grade === "hologram" ? 0x1c6cff : grade === "ice" ? 0x7ec8ea : 0x000000);
     material.emissiveIntensity = grade === "hologram" ? 0.85 : grade === "ice" ? 0.35 : 0;
     material.emissiveMap = grade === "hologram" || grade === "ice" ? material.map : null;
     material.roughness = grade === "ice" ? 0.18 : grade === "hologram" ? 0.28 : 0.94;
-    const shell = material === rig.outer || material === rig.outerLimb;
+    const shell = material === rig.outer || material === rig.outerLimb || material === rig.outerLimbLower;
     if (grade === "hologram") {
       material.transparent = true;
       material.opacity = 0.86;

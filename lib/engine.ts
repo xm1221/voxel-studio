@@ -257,7 +257,20 @@ export class StudioEngine {
       rig.texture.image = canvas;
     }
     rig.texture.needsUpdate = true;
-    const materials = [rig.inner, rig.limb, rig.outer, rig.outerLimb, rig.toonInner, rig.toonLimb, rig.toonOuter, rig.toonOuterLimb];
+    const materials = [
+      rig.inner,
+      rig.limb,
+      rig.limbLower,
+      rig.outer,
+      rig.outerLimb,
+      rig.outerLimbLower,
+      rig.toonInner,
+      rig.toonLimb,
+      rig.toonLimbLower,
+      rig.toonOuter,
+      rig.toonOuterLimb,
+      rig.toonOuterLimbLower,
+    ];
     for (const material of materials) {
       material.map = rig.texture;
       if (material.emissiveMap) material.emissiveMap = rig.texture;
