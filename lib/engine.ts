@@ -39,7 +39,7 @@ import { loadImage, loadSkinToCanvas } from "./skin-image";
 
 const DEG = Math.PI / 180;
 
-type PartKind = "inner" | "limb" | "outer" | "outerLimb";
+type PartKind = "inner" | "limb" | "limbJoint" | "outer" | "outerLimb" | "outerJoint";
 
 type Rig = {
   id: string;
@@ -59,12 +59,16 @@ type Rig = {
   outlines: Mesh[];
   inner: MeshStandardMaterial;
   limb: MeshStandardMaterial;
+  limbJoint: MeshStandardMaterial;
   outer: MeshStandardMaterial;
   outerLimb: MeshStandardMaterial;
+  outerJoint: MeshStandardMaterial;
   toonInner: MeshToonMaterial;
   toonLimb: MeshToonMaterial;
+  toonLimbJoint: MeshToonMaterial;
   toonOuter: MeshToonMaterial;
   toonOuterLimb: MeshToonMaterial;
+  toonOuterJoint: MeshToonMaterial;
   outlineMat: MeshBasicMaterial;
   capeMat: MeshStandardMaterial;
   cape: Mesh;
@@ -195,10 +199,16 @@ function addBox(
   return mesh;
 }
 
-function segmentCaps(u: number, v: number, w: number, d: number, side: number, texW: number, texH: number) {
-  const px = (u + d + w / 2) / texW;
-  const py = 1 - (v + d + side + 3) / texH;
-  return { u: px, v: py };
+/** Drop one box face so the joint cap is not a second surface. Face order matches setUVs. */
+function dropFace(geometry: BoxGeometry, face: number) {
+  const index = geometry.getIndex();
+  if (!index) return;
+  const next: number[] = [];
+  for (let i = 0; i < index.count; i += 1) {
+    if (Math.floor(i / 6) === face) continue;
+    next.push(index.getX(i));
+  }
+  geometry.setIndex(next);
 }
 
 function buildRig(model: ModelType, gradient: Texture): Rig {
@@ -227,6 +237,18 @@ function buildRig(model: ModelType, gradient: Texture): Rig {
   const toonLimb = toonMaterial(gradient, true, false);
   const toonOuter = toonMaterial(gradient, false, true);
   const toonOuterLimb = toonMaterial(gradient, true, true);
+  const limbJoint = limb.clone();
+  limbJoint.polygonOffsetFactor = 4;
+  limbJoint.polygonOffsetUnits = 4;
+  const outerJoint = outerLimb.clone();
+  outerJoint.polygonOffsetFactor = 3;
+  outerJoint.polygonOffsetUnits = 3;
+  const toonLimbJoint = toonLimb.clone();
+  toonLimbJoint.polygonOffsetFactor = 4;
+  toonLimbJoint.polygonOffsetUnits = 4;
+  const toonOuterJoint = toonOuterLimb.clone();
+  toonOuterJoint.polygonOffsetFactor = 3;
+  toonOuterJoint.polygonOffsetUnits = 3;
   const outlineMat = new MeshBasicMaterial({ color: 0x14120f, side: BackSide });
 
   const rigBase = {
@@ -249,6 +271,37 @@ function buildRig(model: ModelType, gradient: Texture): Rig {
   addBox(body, rigBase, 8.5, 12.5, 4.5, { u: 16, v: 32, w: 8, h: 12, d: 4, side: 0, texW: 64, texH: 64 }, outer, "outer", [0, 0, 0]);
 
   const armX = slim ? 0.5 : 1;
+  const hinge = (
+    anchor: Group,
+    width: number,
+    depth: number,
+    u: number,
+    v: number,
+    ou: number,
+    ov: number,
+    topY: number,
+  ) => {
+    const jointY = topY - 6;
+    const endY = topY - 11.65;
+    const overlap = 2.4;
+    const upperH = topY - (jointY - overlap);
+    const upperCenter = (topY + jointY - overlap) / 2;
+    const lowerH = jointY + overlap - endY;
+    const lowerCenter = (jointY + overlap + endY) / 2;
+    const pivot = new Group();
+    pivot.position.y = jointY;
+    anchor.add(pivot);
+    const upper = addBox(anchor, rigBase, width, upperH, depth, { u, v, w: width, h: 8, d: depth, side: 0, texW: 64, texH: 64 }, limb, "limb", [0, upperCenter, 0]);
+    const upperOuter = addBox(anchor, rigBase, width + 0.5, upperH + 0.3, depth + 0.5, { u: ou, v: ov, w: width, h: 8, d: depth, side: 0, texW: 64, texH: 64 }, outerLimb, "outerLimb", [0, upperCenter, 0]);
+    const lower = addBox(pivot, rigBase, width, lowerH, depth, { u, v, w: width, h: 8, d: depth, side: 4, texW: 64, texH: 64 }, limbJoint, "limbJoint", [0, lowerCenter - jointY, 0]);
+    const lowerOuter = addBox(pivot, rigBase, width + 0.5, lowerH + 0.3, depth + 0.5, { u: ou, v: ov, w: width, h: 8, d: depth, side: 4, texW: 64, texH: 64 }, outerJoint, "outerJoint", [0, lowerCenter - jointY, 0]);
+    dropFace(upper.geometry as BoxGeometry, 3);
+    dropFace(upperOuter.geometry as BoxGeometry, 3);
+    dropFace(lower.geometry as BoxGeometry, 2);
+    dropFace(lowerOuter.geometry as BoxGeometry, 2);
+    return pivot;
+  };
+
   const makeArm = (side: "right" | "left") => {
     const shoulder = new Group();
     shoulder.position.set(side === "right" ? -5 : 5, -2, 0);
@@ -260,33 +313,7 @@ function buildRig(model: ModelType, gradient: Texture): Rig {
     const v = side === "right" ? 16 : 48;
     const ou = side === "right" ? 40 : 48;
     const ov = side === "right" ? 32 : 48;
-    const upperCap = segmentCaps(u, v, armW, 4, 0, 64, 64);
-    const lowerCap = segmentCaps(u, v, armW, 4, 6, 64, 64);
-    addBox(assembly, rigBase, armW, 6, 4, { u, v, w: armW, h: 6, d: 4, side: 0, texW: 64, texH: 64 }, limb, "limb", [0, -1, 0], {
-      face: 3,
-      u: upperCap.u,
-      v: upperCap.v,
-    });
-    addBox(assembly, rigBase, armW + 0.5, 6.35, 4.5, { u: ou, v: ov, w: armW, h: 6, d: 4, side: 0, texW: 64, texH: 64 }, outerLimb, "outerLimb", [0, -1, 0], {
-      face: 3,
-      u: upperCap.u,
-      v: upperCap.v,
-    });
-    const elbow = new Group();
-    // Pivot on the back edge so a bend is one right angle. The box still ends where it used to.
-    elbow.position.set(0, -4, -2);
-    assembly.add(elbow);
-    addBox(elbow, rigBase, armW, 6, 4, { u, v, w: armW, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, limb, "limb", [0, -2.65, 2], {
-      face: 2,
-      u: lowerCap.u,
-      v: lowerCap.v,
-    });
-    addBox(elbow, rigBase, armW + 0.5, 6.35, 4.5, { u: ou, v: ov, w: armW, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, outerLimb, "outerLimb", [0, -2.65, 2], {
-      face: 2,
-      u: lowerCap.u,
-      v: lowerCap.v,
-    });
-    return { shoulder, elbow };
+    return { shoulder, elbow: hinge(assembly, armW, 4, u, v, ou, ov, 2) };
   };
 
   const right = makeArm("right");
@@ -300,33 +327,7 @@ function buildRig(model: ModelType, gradient: Texture): Rig {
     const v = side === "right" ? 16 : 48;
     const ou = side === "right" ? 0 : 0;
     const ov = side === "right" ? 32 : 48;
-    const upperCap = segmentCaps(u, v, 4, 4, 0, 64, 64);
-    const lowerCap = segmentCaps(u, v, 4, 4, 6, 64, 64);
-    addBox(hip, rigBase, 4, 6, 4, { u, v, w: 4, h: 6, d: 4, side: 0, texW: 64, texH: 64 }, limb, "limb", [0, -3, 0], {
-      face: 3,
-      u: upperCap.u,
-      v: upperCap.v,
-    });
-    addBox(hip, rigBase, 4.5, 6.35, 4.5, { u: ou, v: ov, w: 4, h: 6, d: 4, side: 0, texW: 64, texH: 64 }, outerLimb, "outerLimb", [0, -3, 0], {
-      face: 3,
-      u: upperCap.u,
-      v: upperCap.v,
-    });
-    const knee = new Group();
-    // Pivot on the front edge. Straight pose keeps the old foot line; a bend makes one corner.
-    knee.position.set(0, -6, 2);
-    hip.add(knee);
-    addBox(knee, rigBase, 4, 6, 4, { u, v, w: 4, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, limb, "limb", [0, -2.65, -2], {
-      face: 2,
-      u: lowerCap.u,
-      v: lowerCap.v,
-    });
-    addBox(knee, rigBase, 4.5, 6.35, 4.5, { u: ou, v: ov, w: 4, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, outerLimb, "outerLimb", [0, -2.65, -2], {
-      face: 2,
-      u: lowerCap.u,
-      v: lowerCap.v,
-    });
-    return { hip, knee };
+    return { hip, knee: hinge(hip, 4, 4, u, v, ou, ov, 0) };
   };
 
   const rightLeg = makeLeg("right");
@@ -407,12 +408,16 @@ function buildRig(model: ModelType, gradient: Texture): Rig {
     outlines: rigBase.outlines,
     inner,
     limb,
+    limbJoint,
     outer,
     outerLimb,
+    outerJoint,
     toonInner,
     toonLimb,
+    toonLimbJoint,
     toonOuter,
     toonOuterLimb,
+    toonOuterJoint,
     outlineMat,
     capeMat,
     cape,
@@ -838,14 +843,16 @@ export class StudioEngine {
     const materialFor = (kind: PartKind) => {
       if (kind === "inner") return comic ? rig.toonInner : rig.inner;
       if (kind === "limb") return comic ? rig.toonLimb : rig.limb;
+      if (kind === "limbJoint") return comic ? rig.toonLimbJoint : rig.limbJoint;
       if (kind === "outer") return comic ? rig.toonOuter : rig.outer;
+      if (kind === "outerJoint") return comic ? rig.toonOuterJoint : rig.outerJoint;
       return comic ? rig.toonOuterLimb : rig.outerLimb;
     };
     for (const part of rig.parts) {
       part.mesh.material = materialFor(part.kind);
-      part.mesh.visible = showOuter || part.kind === "inner" || part.kind === "limb";
+      part.mesh.visible = showOuter || part.kind === "inner" || part.kind === "limb" || part.kind === "limbJoint";
     }
-    const standards = [rig.inner, rig.limb, rig.outer, rig.outerLimb];
+    const standards = [rig.inner, rig.limb, rig.limbJoint, rig.outer, rig.outerLimb, rig.outerJoint];
     for (const material of standards) {
       material.color.set(grade === "hologram" ? 0x9af6ff : grade === "ice" ? 0xd9f4ff : 0xffffff);
       material.emissive.set(grade === "hologram" ? 0x1c6cff : grade === "ice" ? 0x7ec8ea : 0x000000);
@@ -856,7 +863,7 @@ export class StudioEngine {
         material.transparent = true;
         material.opacity = 0.86;
         material.alphaTest = 0.05;
-      } else if (material === rig.outer || material === rig.outerLimb) {
+      } else if (material === rig.outer || material === rig.outerLimb || material === rig.outerJoint) {
         material.transparent = true;
         material.opacity = 1;
         material.alphaTest = 0.5;
@@ -922,7 +929,7 @@ export class StudioEngine {
       rig.texture.image = canvas;
     }
     rig.texture.needsUpdate = true;
-    for (const material of [rig.inner, rig.limb, rig.outer, rig.outerLimb, rig.toonInner, rig.toonLimb, rig.toonOuter, rig.toonOuterLimb]) {
+    for (const material of [rig.inner, rig.limb, rig.limbJoint, rig.outer, rig.outerLimb, rig.outerJoint, rig.toonInner, rig.toonLimb, rig.toonLimbJoint, rig.toonOuter, rig.toonOuterLimb, rig.toonOuterJoint]) {
       material.map = rig.texture;
       if (material.emissiveMap) material.emissiveMap = rig.texture;
       material.needsUpdate = true;
