@@ -54,4 +54,15 @@ describe("bendy limb", () => {
     assert.ok(Math.abs(position.getZ(shoulder) - rest.getZ(shoulder)) < 1e-4);
     assert.ok(position.getZ(wrist) > rest.getZ(wrist) + 4);
   });
+
+  it("maps an oversized shell inside the overlay rect", () => {
+    const geometry = createBentBox(4.5, 4.5, 2.2, -9.85, { u: 40, v: 32, w: 4, h: 12, d: 4, texW: 64, texH: 64 });
+    const uv = geometry.getAttribute("uv");
+    for (let i = 0; i < uv.count; i += 1) {
+      const texX = uv.getX(i) * 64;
+      const texY = (1 - uv.getY(i)) * 64;
+      assert.ok(texX > 40 && texX < 56, `texX ${texX}`);
+      assert.ok(texY > 32 && texY < 48, `texY ${texY}`);
+    }
+  });
 });

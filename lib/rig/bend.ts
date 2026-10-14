@@ -73,7 +73,13 @@ function writeBoxUVs(geometry: BoxGeometry, rect: UvRect) {
   const normal = geometry.getAttribute("normal");
   const { u, v, w, h, d, texW, texH } = rect;
   const side = rect.side ?? 0;
+  // The outer shell is slightly larger than the skin rect. Map the real face
+  // onto that rect so edge vertices cannot sample the base layer beside it.
+  const width = geometry.parameters.width;
   const height = geometry.parameters.height;
+  const depth = geometry.parameters.depth;
+  const across = (value: number, min: number, size: number, origin: number, span: number) =>
+    origin + ((value - min) / size) * span;
   const uvs = new Float32Array(position.count * 2);
   for (let i = 0; i < position.count; i += 1) {
     const x = position.getX(i);
@@ -82,7 +88,6 @@ function writeBoxUVs(geometry: BoxGeometry, rect: UvRect) {
     const nx = normal.getX(i);
     const ny = normal.getY(i);
     const nz = normal.getZ(i);
-    const down = (height / 2 - y) / height;
     let texX = u;
     let texY = v;
     let spanX = w;
@@ -94,35 +99,35 @@ function writeBoxUVs(geometry: BoxGeometry, rect: UvRect) {
       originY = v;
       spanX = w;
       spanY = d;
-      texX = originX + (x + w / 2);
-      texY = originY + (d / 2 - z);
+      texX = across(x, -width / 2, width, originX, spanX);
+      texY = across(-z, -depth / 2, depth, originY, spanY);
     } else if (ny < -0.5) {
       originX = u + w + d;
       originY = v;
       spanX = w;
       spanY = d;
-      texX = originX + (w / 2 - x);
-      texY = originY + (z + d / 2);
+      texX = across(-x, -width / 2, width, originX, spanX);
+      texY = across(z, -depth / 2, depth, originY, spanY);
     } else {
       originY = v + d + side;
       spanY = h;
-      texY = originY + down * h;
+      texY = across(-y, -height / 2, height, originY, spanY);
       if (nx > 0.5) {
         originX = u + w + d;
         spanX = d;
-        texX = originX + (d / 2 - z);
+        texX = across(-z, -depth / 2, depth, originX, spanX);
       } else if (nx < -0.5) {
         originX = u;
         spanX = d;
-        texX = originX + (z + d / 2);
+        texX = across(z, -depth / 2, depth, originX, spanX);
       } else if (nz > 0.5) {
         originX = u + d;
         spanX = w;
-        texX = originX + (x + w / 2);
+        texX = across(x, -width / 2, width, originX, spanX);
       } else {
         originX = u + w + d * 2;
         spanX = w;
-        texX = originX + (w / 2 - x);
+        texX = across(-x, -width / 2, width, originX, spanX);
       }
     }
     uvs[i * 2] = inset(texX, originX, spanX) / texW;

@@ -27,8 +27,8 @@ import type { BendJoint } from "./layers";
 import { buildBoxUVs, capFace, type UvRect } from "./uv";
 
 const DEG = Math.PI / 180;
-/** Vanilla hangs the cape a few degrees off the back so it clears the body. */
-const CAPE_REST = 6;
+/** Same rest tilt skinview3d uses for a vanilla cape (about 10.8°). */
+const CAPE_REST = 10.8;
 
 export type PartKind = "inner" | "limb" | "limbLower" | "outer" | "outerLimb" | "outerLimbLower" | "voxel";
 
@@ -75,7 +75,8 @@ export type Rig = {
   toonVoxel: MeshToonMaterial;
   outlineMat: MeshBasicMaterial;
   capeMat: MeshStandardMaterial;
-  cape: Mesh;
+  /** Pivot on the body's back top edge. The cloth mesh hangs from it. */
+  cape: Group;
   nametag: Mesh;
   bubble: Mesh;
   nameCanvas: HTMLCanvasElement;
@@ -316,7 +317,6 @@ export function buildRig(model: ModelType, gradient: Texture): Rig {
   const leftLeg = makeLeg("left");
 
   const capeGeo = new BoxGeometry(10, 16, 1);
-  capeGeo.translate(0, -8, 0);
   capeGeo.setAttribute("uv", new BufferAttribute(buildBoxUVs({ u: 0, v: 0, w: 10, h: 16, d: 1, texW: 64, texH: 32 }), 2));
   const capeMat = new MeshStandardMaterial({
     roughness: 0.9,
@@ -325,12 +325,19 @@ export function buildRig(model: ModelType, gradient: Texture): Rig {
     transparent: true,
     alphaTest: 0.4,
   });
-  const cape = new Mesh(capeGeo, capeMat);
-  // Pivot on the body's back top edge. The cloth itself sits one pixel behind that face.
-  cape.position.set(0, 6, -3.5);
+  const capeMesh = new Mesh(capeGeo, capeMat);
+  // Box is centered, so y=-8 puts the pivot on the top edge and z=0.5 puts it on the inner face.
+  capeMesh.position.set(0, -8, 0.5);
+  capeMesh.castShadow = true;
+  // Vanilla turns the cape 180° so the outside texture faces away from the body and the cloth
+  // stays parallel to the back. Parenting to the body makes a torso lean carry the cape.
+  const cape = new Group();
+  cape.position.set(0, 6, -2);
+  cape.rotation.order = "XYZ";
+  cape.rotation.y = Math.PI;
   cape.rotation.x = CAPE_REST * DEG;
   cape.visible = false;
-  cape.castShadow = true;
+  cape.add(capeMesh);
   body.add(cape);
 
   const nameCanvas = document.createElement("canvas");
@@ -448,7 +455,7 @@ export function applyJoints(
   for (const bend of rig.bends) deformBend(bend.geometry, bend.pivotY, joints[bend.joint] * DEG);
   rig.root.rotation.set(0, 0, extra.roll * DEG);
   rig.root.position.set(x + extra.sway, (isSitting(joints) ? SIT_DROP : 0) + extra.bob, 0);
-  rig.cape.rotation.x = (CAPE_REST + extra.cape) * DEG;
+  rig.cape.rotation.set((CAPE_REST + extra.cape) * DEG, Math.PI, 0);
 }
 
 export function configureTexture(texture: CanvasTexture) {
