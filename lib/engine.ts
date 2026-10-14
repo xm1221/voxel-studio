@@ -15,6 +15,7 @@ import { captureClip, captureStill } from "./capture";
 import { drawBubble, drawTag } from "./labels";
 import { phaseOffset, sampleClip } from "./motion";
 import { applyJoints, buildRig, configureTexture, type Rig } from "./rig/build";
+import { voxelPieces, type VoxelParent } from "./rig/layers";
 import { applyLook } from "./rig/look";
 import { applyLights, createLights } from "./lighting";
 import { applyStage, createStage } from "./stage";
@@ -161,7 +162,7 @@ export class StudioEngine {
         this.rigs.set(player.id, rig);
       }
       rig.ring.visible = player.id === draft.activeId;
-      applyLook(rig, draft.grade, draft.outline, draft.showOuter);
+      applyLook(rig, draft.grade, draft.outline, draft.showOuter, draft.layerMode);
       this.applyLabels(rig, player.nametag, player.bubble);
       if (player.skinUrl && rig.skinUrl !== player.skinUrl) {
         const token = ++rig.token;
@@ -270,11 +271,52 @@ export class StudioEngine {
       rig.toonOuter,
       rig.toonOuterLimb,
       rig.toonOuterLimbLower,
+      rig.voxel,
+      rig.toonVoxel,
     ];
     for (const material of materials) {
       material.map = rig.texture;
       if (material.emissiveMap) material.emissiveMap = rig.texture;
       material.needsUpdate = true;
+    }
+    this.rebuildVoxels(rig, canvas);
+    if (this.draft) applyLook(rig, this.draft.grade, this.draft.outline, this.draft.showOuter, this.draft.layerMode);
+  }
+
+  private rebuildVoxels(rig: Rig, canvas: HTMLCanvasElement) {
+    for (const mesh of rig.voxels) {
+      mesh.geometry.dispose();
+      mesh.parent?.remove(mesh);
+    }
+    rig.voxels = [];
+    rig.parts = rig.parts.filter((part) => part.kind !== "voxel");
+    rig.bends = rig.bends.filter((bend) => bend.source !== "voxel");
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return;
+    let image: ImageData;
+    try {
+      image = context.getImageData(0, 0, canvas.width, canvas.height);
+    } catch {
+      return;
+    }
+    const parents: Record<VoxelParent, Rig["head"]> = {
+      head: rig.head,
+      body: rig.body,
+      rArm: rig.rArm,
+      lArm: rig.lArm,
+      rLeg: rig.rHip,
+      lLeg: rig.lHip,
+    };
+    for (const piece of voxelPieces(rig.model, { width: image.width, height: image.height, data: image.data })) {
+      const mesh = new Mesh(piece.geometry, rig.voxel);
+      mesh.castShadow = false;
+      mesh.visible = false;
+      parents[piece.parent].add(mesh);
+      rig.parts.push({ mesh, kind: "voxel" });
+      rig.voxels.push(mesh);
+      if (piece.pivotY !== undefined && piece.joint) {
+        rig.bends.push({ geometry: piece.geometry, pivotY: piece.pivotY, joint: piece.joint, source: "voxel" });
+      }
     }
   }
 

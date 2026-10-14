@@ -2,6 +2,7 @@ import {
   BackSide,
   BoxGeometry,
   BufferAttribute,
+  BufferGeometry,
   CanvasTexture,
   CircleGeometry,
   ClampToEdgeWrapping,
@@ -20,13 +21,23 @@ import {
   type Texture,
 } from "three";
 import type { Joints, ModelType } from "../types";
+import { createBentBox, deformBend } from "./bend";
 import { ARM, LEG, SIT_DROP, isSitting } from "./layout";
+import type { BendJoint } from "./layers";
 import { buildBoxUVs, capFace, type UvRect } from "./uv";
 
 const DEG = Math.PI / 180;
-const CAPE_REST = 12;
+/** Vanilla hangs the cape a few degrees off the back so it clears the body. */
+const CAPE_REST = 6;
 
-export type PartKind = "inner" | "limb" | "limbLower" | "outer" | "outerLimb" | "outerLimbLower";
+export type PartKind = "inner" | "limb" | "limbLower" | "outer" | "outerLimb" | "outerLimbLower" | "voxel";
+
+export type Bend = {
+  geometry: BufferGeometry;
+  pivotY: number;
+  joint: BendJoint;
+  source: "limb" | "voxel";
+};
 
 export type Rig = {
   id: string;
@@ -36,13 +47,17 @@ export type Rig = {
   body: Group;
   rShoulder: Group;
   rElbow: Group;
+  rArm: Group;
   lShoulder: Group;
   lElbow: Group;
+  lArm: Group;
   rHip: Group;
   rKnee: Group;
   lHip: Group;
   lKnee: Group;
   parts: { mesh: Mesh; kind: PartKind }[];
+  bends: Bend[];
+  voxels: Mesh[];
   outlines: Mesh[];
   inner: MeshStandardMaterial;
   limb: MeshStandardMaterial;
@@ -56,6 +71,8 @@ export type Rig = {
   toonOuter: MeshToonMaterial;
   toonOuterLimb: MeshToonMaterial;
   toonOuterLimbLower: MeshToonMaterial;
+  voxel: MeshStandardMaterial;
+  toonVoxel: MeshToonMaterial;
   outlineMat: MeshBasicMaterial;
   capeMat: MeshStandardMaterial;
   cape: Mesh;
@@ -157,10 +174,6 @@ function placeBox(
   }
 }
 
-function capTexel(u: number, d: number, w: number, v: number, side: number) {
-  return { px: u + d + w / 2 - 0.5, py: v + d + side + 2.5 };
-}
-
 export function buildRig(model: ModelType, gradient: Texture): Rig {
   const slim = model === "slim";
   const armW = slim ? 3 : 4;
@@ -197,13 +210,43 @@ export function buildRig(model: ModelType, gradient: Texture): Rig {
   const toonOuter = toon(gradient, 0, 0, true);
   const toonOuterLimb = toon(gradient, -2, -2, true);
   const toonOuterLimbLower = toon(gradient, -4, -4, true);
+  const voxel = new MeshStandardMaterial({
+    roughness: 0.94,
+    metalness: 0,
+    side: FrontSide,
+    alphaTest: 0.5,
+  });
+  const toonVoxel = toon(gradient, 0, 0, true);
   const outlineMat = new MeshBasicMaterial({ color: 0x14120f, side: BackSide });
 
   const rigBase = {
     parts: [] as Rig["parts"],
     outlines: [] as Mesh[],
+    bends: [] as Bend[],
     outlineMat,
   };
+
+  function placeBent(
+    parent: Group,
+    geometry: BufferGeometry,
+    material: Material,
+    kind: PartKind,
+    joint: Bend["joint"],
+    pivotY: number,
+  ) {
+    const mesh = new Mesh(geometry, material);
+    mesh.castShadow = kind === "limb";
+    parent.add(mesh);
+    rigBase.parts.push({ mesh, kind });
+    rigBase.bends.push({ geometry, pivotY, joint, source: "limb" });
+    if (kind === "limb") {
+      const outline = new Mesh(geometry, rigBase.outlineMat);
+      outline.castShadow = false;
+      outline.visible = false;
+      parent.add(outline);
+      rigBase.outlines.push(outline);
+    }
+  }
 
   const head = new Group();
   head.name = "head";
@@ -230,44 +273,22 @@ export function buildRig(model: ModelType, gradient: Texture): Rig {
     const v = side === "right" ? 16 : 48;
     const ou = side === "right" ? 40 : 48;
     const ov = side === "right" ? 32 : 48;
-    const upperCap = capTexel(u, 4, armW, v, 0);
-    const lowerCap = capTexel(u, 4, armW, v, 6);
-    placeBox(assembly, rigBase, armW, ARM.upperH, ARM.depth, { u, v, w: armW, h: 6, d: 4, texW: 64, texH: 64 }, limb, "limb", [0, ARM.upperY, 0], {
-      face: 3,
-      ...upperCap,
-    });
-    placeBox(
+    const top = ARM.upperY + ARM.upperH / 2;
+    const bottom = ARM.elbowY + ARM.lowerY - ARM.lowerH / 2;
+    const joint = side === "right" ? "rElbow" : "lElbow";
+    placeBent(assembly, createBentBox(armW, ARM.depth, top, bottom, { u, v, w: armW, h: 12, d: 4, texW: 64, texH: 64 }), limb, "limb", joint, ARM.elbowY);
+    placeBent(
       assembly,
-      rigBase,
-      armW + 0.5,
-      6.35,
-      4.5,
-      { u: ou, v: ov, w: armW, h: 6, d: 4, texW: 64, texH: 64 },
+      createBentBox(armW + 0.5, 4.5, top + 0.2, bottom - 0.2, { u: ou, v: ov, w: armW, h: 12, d: 4, texW: 64, texH: 64 }),
       outerLimb,
       "outerLimb",
-      [0, ARM.upperY, 0],
-      { face: 3, ...upperCap },
+      joint,
+      ARM.elbowY,
     );
     const elbow = new Group();
     elbow.position.y = ARM.elbowY;
     assembly.add(elbow);
-    placeBox(elbow, rigBase, armW, ARM.lowerH, ARM.depth, { u, v, w: armW, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, limbLower, "limbLower", [0, ARM.lowerY, 0], {
-      face: 2,
-      ...lowerCap,
-    });
-    placeBox(
-      elbow,
-      rigBase,
-      armW + 0.5,
-      6.35,
-      4.5,
-      { u: ou, v: ov, w: armW, h: 6, d: 4, side: 6, texW: 64, texH: 64 },
-      outerLimbLower,
-      "outerLimbLower",
-      [0, ARM.lowerY, 0],
-      { face: 2, ...lowerCap },
-    );
-    return { shoulder, elbow };
+    return { shoulder, elbow, assembly };
   };
 
   const right = makeArm("right");
@@ -280,27 +301,14 @@ export function buildRig(model: ModelType, gradient: Texture): Rig {
     const u = side === "right" ? 0 : 16;
     const v = side === "right" ? 16 : 48;
     const ov = side === "right" ? 32 : 48;
-    const upperCap = capTexel(u, 4, 4, v, 0);
-    const lowerCap = capTexel(u, 4, 4, v, 6);
-    placeBox(hip, rigBase, LEG.width, LEG.height, LEG.depth, { u, v, w: 4, h: 6, d: 4, texW: 64, texH: 64 }, limb, "limb", [0, LEG.upperY, 0], {
-      face: 3,
-      ...upperCap,
-    });
-    placeBox(hip, rigBase, 4.5, 6.35, 4.5, { u: 0, v: ov, w: 4, h: 6, d: 4, texW: 64, texH: 64 }, outerLimb, "outerLimb", [0, LEG.upperY, 0], {
-      face: 3,
-      ...upperCap,
-    });
+    const top = LEG.upperY + LEG.height / 2;
+    const bottom = LEG.kneeY + LEG.lowerY - LEG.height / 2;
+    const joint = side === "right" ? "rKnee" : "lKnee";
+    placeBent(hip, createBentBox(LEG.width, LEG.depth, top, bottom, { u, v, w: 4, h: 12, d: 4, texW: 64, texH: 64 }), limb, "limb", joint, LEG.kneeY);
+    placeBent(hip, createBentBox(4.5, 4.5, top + 0.2, bottom - 0.2, { u: 0, v: ov, w: 4, h: 12, d: 4, texW: 64, texH: 64 }), outerLimb, "outerLimb", joint, LEG.kneeY);
     const knee = new Group();
     knee.position.y = LEG.kneeY;
     hip.add(knee);
-    placeBox(knee, rigBase, LEG.width, LEG.height, LEG.depth, { u, v, w: 4, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, limbLower, "limbLower", [0, LEG.lowerY, 0], {
-      face: 2,
-      ...lowerCap,
-    });
-    placeBox(knee, rigBase, 4.5, 6.35, 4.5, { u: 0, v: ov, w: 4, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, outerLimbLower, "outerLimbLower", [0, LEG.lowerY, 0], {
-      face: 2,
-      ...lowerCap,
-    });
     return { hip, knee };
   };
 
@@ -308,6 +316,7 @@ export function buildRig(model: ModelType, gradient: Texture): Rig {
   const leftLeg = makeLeg("left");
 
   const capeGeo = new BoxGeometry(10, 16, 1);
+  capeGeo.translate(0, -8, 0);
   capeGeo.setAttribute("uv", new BufferAttribute(buildBoxUVs({ u: 0, v: 0, w: 10, h: 16, d: 1, texW: 64, texH: 32 }), 2));
   const capeMat = new MeshStandardMaterial({
     roughness: 0.9,
@@ -317,7 +326,8 @@ export function buildRig(model: ModelType, gradient: Texture): Rig {
     alphaTest: 0.4,
   });
   const cape = new Mesh(capeGeo, capeMat);
-  cape.position.set(0, 4, -2.4);
+  // Pivot on the body's back top edge. The cloth itself sits one pixel behind that face.
+  cape.position.set(0, 6, -3.5);
   cape.rotation.x = CAPE_REST * DEG;
   cape.visible = false;
   cape.castShadow = true;
@@ -372,13 +382,17 @@ export function buildRig(model: ModelType, gradient: Texture): Rig {
     body,
     rShoulder: right.shoulder,
     rElbow: right.elbow,
+    rArm: right.assembly,
     lShoulder: left.shoulder,
     lElbow: left.elbow,
+    lArm: left.assembly,
     rHip: rightLeg.hip,
     rKnee: rightLeg.knee,
     lHip: leftLeg.hip,
     lKnee: leftLeg.knee,
     parts: rigBase.parts,
+    bends: rigBase.bends,
+    voxels: [],
     outlines: rigBase.outlines,
     inner,
     limb,
@@ -392,6 +406,8 @@ export function buildRig(model: ModelType, gradient: Texture): Rig {
     toonOuter,
     toonOuterLimb,
     toonOuterLimbLower,
+    voxel,
+    toonVoxel,
     outlineMat,
     capeMat,
     cape,
@@ -429,6 +445,7 @@ export function applyJoints(
   rig.rKnee.rotation.set(joints.rKnee * DEG, 0, 0);
   rig.lHip.rotation.set(joints.lLegX * DEG, 0, 0);
   rig.lKnee.rotation.set(joints.lKnee * DEG, 0, 0);
+  for (const bend of rig.bends) deformBend(bend.geometry, bend.pivotY, joints[bend.joint] * DEG);
   rig.root.rotation.set(0, 0, extra.roll * DEG);
   rig.root.position.set(x + extra.sway, (isSitting(joints) ? SIT_DROP : 0) + extra.bob, 0);
   rig.cape.rotation.x = (CAPE_REST + extra.cape) * DEG;

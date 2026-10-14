@@ -1,7 +1,7 @@
 import { clipById } from "./motion";
 import { withBasePath } from "./paths";
 import { poseById } from "./poses";
-import type { SharePayload } from "./persist";
+import { layerModeFrom, type SharePayload } from "./persist";
 import type { CameraSnapshot, PlayerDraft, SceneDraft } from "./types";
 
 export const STORAGE_KEY = "pixelstage.v1";
@@ -38,6 +38,7 @@ export function defaultScene(steve: string): SceneDraft {
     keyIntensity: 1,
     formatId: "youtube",
     showOuter: true,
+    layerMode: "flat",
     clip: "idle",
     clipSpeed: 1,
   };
@@ -85,6 +86,7 @@ export function sceneFromPayload(payload: SharePayload, steve: string, alex: str
       keyIntensity: typeof payload.keyIntensity === "number" ? payload.keyIntensity : 1,
       formatId: payload.formatId || "youtube",
       showOuter: payload.showOuter !== false,
+      layerMode: layerModeFrom(payload.layerMode),
       clip: clipById(payload.clip),
       clipSpeed: typeof payload.clipSpeed === "number" && payload.clipSpeed > 0 ? payload.clipSpeed : 1,
     },
