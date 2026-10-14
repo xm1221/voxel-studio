@@ -27,3 +27,9 @@ npm start
 5. 「复制链接」带上姿势、灯光和机位。上传的皮肤只留在这台浏览器里。
 
 最多四个人同时站在场景里。正版披风会跟着账号一起下来。
+
+## 许可
+
+本仓库以 [MIT License](LICENSE) 发布。
+
+皮肤 UV、旧版 64×32 补全和细臂判断参照了 [skinview3d](https://github.com/bs-community/skinview3d) 与 skinview-utils（同样是 MIT）。这不是 Mojang 或微软的官方产品。
