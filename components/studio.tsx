@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { createAlexSkin, createSteveSkin } from "@/lib/defaults";
 import { StudioEngine } from "@/lib/engine";
-import { FORMATS, formatById } from "@/lib/formats";
+import { FORMATS, formatById, gifFrameSize } from "@/lib/formats";
+import { CLIPS, clipById, clipExportSpan } from "@/lib/motion";
 import { decodePayload, encodePayload, toPayload, type SharePayload } from "@/lib/persist";
 import { POSES, poseById } from "@/lib/poses";
 import { inferModelType, loadImage, loadSkinToCanvas } from "@/lib/skin-image";
@@ -126,8 +127,10 @@ function sceneFromPayload(payload: SharePayload, steve: string, alex: string): {
       godrays: Boolean(payload.godrays),
       light: payload.light || "soft",
       keyIntensity: typeof payload.keyIntensity === "number" ? payload.keyIntensity : 1,
-      formatId: payload.formatId || "thumb",
+      formatId: payload.formatId || "youtube",
       showOuter: payload.showOuter !== false,
+      clip: clipById(payload.clip),
+      clipSpeed: typeof payload.clipSpeed === "number" && payload.clipSpeed > 0 ? payload.clipSpeed : 1,
     },
   };
 }
@@ -150,8 +153,10 @@ function defaultScene(steve: string): SceneDraft {
     godrays: false,
     light: "soft",
     keyIntensity: 1,
-    formatId: "thumb",
+    formatId: "youtube",
     showOuter: true,
+    clip: "idle",
+    clipSpeed: 1,
   };
 }
 
@@ -381,6 +386,36 @@ export function Studio() {
     }
   }
 
+  async function downloadGif() {
+    if (!scene || !engineRef.current) return;
+    const format = formatById(scene.formatId);
+    const size = gifFrameSize(format);
+    const span = clipExportSpan(scene.clip);
+    setBusy(true);
+    try {
+      const blob = await engineRef.current.captureClip({
+        width: size.width,
+        height: size.height,
+        round: format.round,
+        transparent: scene.background === "none",
+        frames: span.frames,
+        seconds: span.seconds,
+      });
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      link.href = url;
+      const who = (active?.name || "skin").toLowerCase().replace(/[^a-z0-9_-]+/gi, "-");
+      link.download = `pixelstage-${who}-${scene.clip}.gif`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setMessage(`已导出 ${size.width}×${size.height} 的 GIF。`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "动图没有导出来。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function share() {
     if (!scene || !engineRef.current) return;
     const payload = toPayload(scene, engineRef.current.getCamera(), false);
@@ -437,6 +472,9 @@ export function Studio() {
           </button>
           <button className="btn" type="button" disabled={busy} onClick={() => void download(true)}>
             透明 PNG
+          </button>
+          <button className="btn" type="button" disabled={busy || !scene} onClick={() => void downloadGif()}>
+            {busy ? "处理中…" : "导出 GIF"}
           </button>
           <button className="btn primary" type="button" disabled={busy || !scene} onClick={() => void download(false)}>
             {busy ? "处理中…" : "下载"}
@@ -560,6 +598,44 @@ export function Studio() {
               </section>
 
               <section className="block">
+                <h2>动作</h2>
+                <div className="poses">
+                  {CLIPS.map((clip) => (
+                    <button
+                      key={clip.id}
+                      type="button"
+                      className={scene.clip === clip.id ? "pose active" : "pose"}
+                      onClick={() => patch((current) => ({ ...current, clip: clip.id }))}
+                    >
+                      {clip.name}
+                    </button>
+                  ))}
+                </div>
+                <div className="row" style={{ marginTop: 8 }}>
+                  {[
+                    [0.65, "慢"],
+                    [1, "正常"],
+                    [1.45, "快"],
+                  ].map(([speed, label]) => (
+                    <button
+                      key={label}
+                      type="button"
+                      className={scene.clipSpeed === speed ? "chip active" : "chip"}
+                      onClick={() => patch((current) => ({ ...current, clipSpeed: Number(speed) }))}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  <button className="btn" type="button" disabled={busy} onClick={() => void downloadGif()}>
+                    导出 GIF
+                  </button>
+                </div>
+                <p className="hint">
+                  {CLIPS.find((clip) => clip.id === scene.clip)?.hint} 动图跟着当前比例，长边 480。
+                </p>
+              </section>
+
+              <section className="block">
                 <h2>关节</h2>
                 <div className="sliders">
                   {SLIDERS.map((slider) => (
@@ -661,7 +737,7 @@ export function Studio() {
                     </button>
                   ))}
                 </div>
-                <p className="hint">下载会按当前机位重渲一版再缩小，边缘比屏幕截图干净。4K 在较弱的设备上可能失败，那时用桌面尺寸。</p>
+                <p className="hint">尺寸按平台规格取整。下载会按当前机位重渲再缩小。GIF 用同一比例，长边收到 480。4K 在较弱的设备上可能失败，那时用桌面尺寸。</p>
               </section>
             </>
           ) : (

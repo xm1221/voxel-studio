@@ -19,7 +19,7 @@ import {
   MeshToonMaterial,
   NearestFilter,
   Object3D,
-  PCFSoftShadowMap,
+  PCFShadowMap,
   PerspectiveCamera,
   PlaneGeometry,
   RingGeometry,
@@ -32,6 +32,8 @@ import {
   type Material,
 } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { encodeGif, type GifFrame } from "./gif";
+import { phaseOffset, sampleClip } from "./motion";
 import type { BackgroundId, CameraSnapshot, GradeId, Joints, LightId, ModelType, OutlineId, SceneDraft } from "./types";
 import { loadImage, loadSkinToCanvas } from "./skin-image";
 
@@ -169,17 +171,19 @@ function addBox(
   material: Material,
   kind: PartKind,
   position: [number, number, number],
-  cap?: { face: number; u: number; v: number },
+  cap?: { face: number; u: number; v: number } | Array<{ face: number; u: number; v: number }>,
+  outline = true,
 ) {
   const geometry = new BoxGeometry(width, height, depth);
   setUVs(geometry, uv.u, uv.v, uv.w, uv.h, uv.d, uv.texW, uv.texH, uv.side);
-  if (cap) paintCap(geometry, cap.face, cap.u, cap.v);
+  const caps = Array.isArray(cap) ? cap : cap ? [cap] : [];
+  for (const item of caps) paintCap(geometry, item.face, item.u, item.v);
   const mesh = new Mesh(geometry, material);
   mesh.position.set(position[0], position[1], position[2]);
   mesh.castShadow = kind === "inner" || kind === "limb";
   parent.add(mesh);
   rig.parts.push({ mesh, kind });
-  if (kind === "inner" || kind === "limb") {
+  if (outline && (kind === "inner" || kind === "limb")) {
     const outline = new Mesh(geometry, rig.outlineMat);
     outline.position.copy(mesh.position);
     outline.scale.setScalar(1.05);
@@ -269,14 +273,15 @@ function buildRig(model: ModelType, gradient: Texture): Rig {
       v: upperCap.v,
     });
     const elbow = new Group();
-    elbow.position.y = -3.65;
+    // Pivot on the back edge so a bend is one right angle. The box still ends where it used to.
+    elbow.position.set(0, -4, -2);
     assembly.add(elbow);
-    addBox(elbow, rigBase, armW, 6, 4, { u, v, w: armW, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, limb, "limb", [0, -3, 0], {
+    addBox(elbow, rigBase, armW, 6, 4, { u, v, w: armW, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, limb, "limb", [0, -2.65, 2], {
       face: 2,
       u: lowerCap.u,
       v: lowerCap.v,
     });
-    addBox(elbow, rigBase, armW + 0.5, 6.35, 4.5, { u: ou, v: ov, w: armW, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, outerLimb, "outerLimb", [0, -3, 0], {
+    addBox(elbow, rigBase, armW + 0.5, 6.35, 4.5, { u: ou, v: ov, w: armW, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, outerLimb, "outerLimb", [0, -2.65, 2], {
       face: 2,
       u: lowerCap.u,
       v: lowerCap.v,
@@ -308,14 +313,15 @@ function buildRig(model: ModelType, gradient: Texture): Rig {
       v: upperCap.v,
     });
     const knee = new Group();
-    knee.position.y = -5.65;
+    // Pivot on the front edge. Straight pose keeps the old foot line; a bend makes one corner.
+    knee.position.set(0, -6, 2);
     hip.add(knee);
-    addBox(knee, rigBase, 4, 6, 4, { u, v, w: 4, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, limb, "limb", [0, -3, 0], {
+    addBox(knee, rigBase, 4, 6, 4, { u, v, w: 4, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, limb, "limb", [0, -2.65, -2], {
       face: 2,
       u: lowerCap.u,
       v: lowerCap.v,
     });
-    addBox(knee, rigBase, 4.5, 6.35, 4.5, { u: ou, v: ov, w: 4, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, outerLimb, "outerLimb", [0, -3, 0], {
+    addBox(knee, rigBase, 4.5, 6.35, 4.5, { u: ou, v: ov, w: 4, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, outerLimb, "outerLimb", [0, -2.65, -2], {
       face: 2,
       u: lowerCap.u,
       v: lowerCap.v,
@@ -369,7 +375,7 @@ function buildRig(model: ModelType, gradient: Texture): Rig {
 
   const ring = new Mesh(
     new RingGeometry(6.2, 6.7, 48),
-    new MeshBasicMaterial({ color: 0xe8a15a, side: DoubleSide, transparent: true, opacity: 0.95 }),
+    new MeshBasicMaterial({ color: 0x2f6fed, side: DoubleSide, transparent: true, opacity: 0.95 }),
   );
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = -15.85;
@@ -428,7 +434,12 @@ function buildRig(model: ModelType, gradient: Texture): Rig {
   };
 }
 
-function applyJoints(rig: Rig, joints: Joints, x: number) {
+function applyJoints(
+  rig: Rig,
+  joints: Joints,
+  x: number,
+  extra: { bob: number; sway: number; roll: number; cape: number },
+) {
   rig.head.rotation.set(joints.headX * DEG, joints.headY * DEG, 0);
   rig.body.rotation.set(joints.bodyX * DEG, 0, 0);
   rig.rShoulder.rotation.set(joints.rArmX * DEG, 0, joints.rArmZ * DEG);
@@ -440,7 +451,9 @@ function applyJoints(rig: Rig, joints: Joints, x: number) {
   rig.lHip.rotation.set(joints.lLegX * DEG, 0, 0);
   rig.lKnee.rotation.set(joints.lKnee * DEG, 0, 0);
   const sitting = joints.rLegX < -50 && joints.lLegX < -50 && joints.rKnee > 45 && joints.lKnee > 45;
-  rig.root.position.set(x, sitting ? -6 : 0, 0);
+  rig.root.rotation.set(0, 0, extra.roll * DEG);
+  rig.root.position.set(x + extra.sway, (sitting ? -6 : 0) + extra.bob, 0);
+  rig.cape.rotation.x = (12 + extra.cape) * DEG;
 }
 
 function drawTag(canvas: HTMLCanvasElement, text: string) {
@@ -465,14 +478,14 @@ function drawBubble(canvas: HTMLCanvasElement, text: string) {
   const context = canvas.getContext("2d");
   if (!context) return;
   context.clearRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = "#f6f1e7";
+  context.fillStyle = "#ffffff";
   roundRect(context, 16, 12, 480, 120, 28);
   context.beginPath();
   context.moveTo(46, 132);
   context.lineTo(28, 176);
   context.lineTo(92, 132);
   context.fill();
-  context.fillStyle = "#1c1915";
+  context.fillStyle = "#16325c";
   context.font = "600 42px Outfit, 'WenQuanYi Micro Hei', sans-serif";
   context.textAlign = "center";
   context.textBaseline = "middle";
@@ -522,8 +535,17 @@ const LIGHTS: Record<LightId, { key: number; fill: number; rim: number; keyColor
   moon: { key: 1.85, fill: 0.4, rim: 1.55, keyColor: 0xd5e4ff, fillColor: 0x1b3b6a, rimColor: 0xf4f8ff, hemi: 0.22 },
 };
 
+type ClipSampleState = {
+  joints: Joints;
+  bob: number;
+  sway: number;
+  roll: number;
+  cape: number;
+  ready: boolean;
+};
+
 const BACKGROUNDS: Record<Exclude<BackgroundId, "none">, number> = {
-  studio: 0x14161c,
+  studio: 0xe4eef9,
   noon: 0x79b4ea,
   sunset: 0xe08a52,
   night: 0x0d1424,
@@ -551,13 +573,19 @@ export class StudioEngine {
   private frame = 0;
   private observer: ResizeObserver;
   private backgroundColor = new Color(BACKGROUNDS.studio);
+  private draft: SceneDraft | null = null;
+  private clipTime = 0;
+  private lastClip = "";
+  private lastTick = 0;
+  private held = false;
+  private readonly shown = new Map<string, ClipSampleState>();
 
   constructor(container: HTMLElement) {
     this.renderer = new WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.outputColorSpace = SRGBColorSpace;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = PCFSoftShadowMap;
+    this.renderer.shadowMap.type = PCFShadowMap;
     this.renderer.setClearColor(0x000000, 0);
     this.renderer.domElement.style.width = "100%";
     this.renderer.domElement.style.height = "100%";
@@ -607,8 +635,8 @@ export class StudioEngine {
 
     const studioMap = pixelTexture((context) => {
       const gradient = context.createRadialGradient(8, 8, 1, 8, 8, 8);
-      gradient.addColorStop(0, "#3a342c");
-      gradient.addColorStop(1, "#14161c");
+      gradient.addColorStop(0, "#f7fbff");
+      gradient.addColorStop(1, "#d5e4f6");
       context.fillStyle = gradient;
       context.fillRect(0, 0, 16, 16);
     });
@@ -701,7 +729,12 @@ export class StudioEngine {
 
   private loop = () => {
     this.frame = requestAnimationFrame(this.loop);
+    if (this.held) return;
+    const now = performance.now();
+    const dt = this.lastTick === 0 ? 0 : Math.min(0.05, (now - this.lastTick) / 1000);
+    this.lastTick = now;
     this.controls.update();
+    this.poseAll(dt);
     for (const rig of this.rigs.values()) {
       rig.nametag.quaternion.copy(this.camera.quaternion);
       rig.bubble.quaternion.copy(this.camera.quaternion);
@@ -720,15 +753,21 @@ export class StudioEngine {
   };
 
   sync(draft: SceneDraft) {
+    if (draft.clip !== this.lastClip) {
+      this.clipTime = 0;
+      this.lastClip = draft.clip;
+    }
+    this.draft = draft;
     const ids = new Set(draft.players.map((player) => player.id));
     for (const [id, rig] of this.rigs) {
       if (ids.has(id)) continue;
       this.disposeRig(rig);
       this.holder.remove(rig.root);
       this.rigs.delete(id);
+      this.shown.delete(id);
     }
 
-    draft.players.forEach((player, index) => {
+    draft.players.forEach((player) => {
       let rig = this.rigs.get(player.id);
       if (!rig || rig.model !== player.model) {
         if (rig) {
@@ -741,8 +780,6 @@ export class StudioEngine {
         this.holder.add(rig.root);
         this.rigs.set(player.id, rig);
       }
-      const x = (index - (draft.players.length - 1) / 2) * 22;
-      applyJoints(rig, player.joints, x);
       rig.ring.visible = player.id === draft.activeId;
       this.applyLook(rig, draft.grade, draft.outline, draft.showOuter);
       this.applyLabels(rig, player.nametag, player.bubble);
@@ -762,6 +799,38 @@ export class StudioEngine {
     });
 
     this.applyWorld(draft);
+    this.poseAll(0);
+  }
+
+  private poseAll(dt: number, exactTime?: number) {
+    const draft = this.draft;
+    if (!draft) return;
+    const speed = Number.isFinite(draft.clipSpeed) && draft.clipSpeed > 0 ? draft.clipSpeed : 1;
+    if (exactTime === undefined && draft.clip !== "none") this.clipTime += dt * speed;
+    const time = exactTime ?? this.clipTime;
+    const follow = exactTime === undefined ? 1 - Math.exp(-(draft.clip === "none" ? 12 : 18) * Math.max(dt, 0)) : 1;
+    draft.players.forEach((player, index) => {
+      const rig = this.rigs.get(player.id);
+      if (!rig) return;
+      const sampled = sampleClip(draft.clip, time + phaseOffset(index, draft.clip), player.joints);
+      let shown = this.shown.get(player.id);
+      if (!shown || exactTime !== undefined) {
+        shown = { joints: { ...sampled.joints }, bob: sampled.bob, sway: sampled.sway, roll: sampled.roll, cape: sampled.cape, ready: true };
+        if (exactTime === undefined) this.shown.set(player.id, shown);
+      } else if (follow > 0) {
+        const mix = (current: number, target: number) => current + (target - current) * follow;
+        const joints = shown.joints;
+        (Object.keys(joints) as (keyof Joints)[]).forEach((key) => {
+          joints[key] = mix(joints[key], sampled.joints[key]);
+        });
+        shown.bob = mix(shown.bob, sampled.bob);
+        shown.sway = mix(shown.sway, sampled.sway);
+        shown.roll = mix(shown.roll, sampled.roll);
+        shown.cape = mix(shown.cape, sampled.cape);
+      }
+      const x = (index - (draft.players.length - 1) / 2) * 22;
+      applyJoints(rig, shown.joints, x, shown);
+    });
   }
 
   private applyLook(rig: Rig, grade: GradeId, outline: OutlineId, showOuter: boolean) {
@@ -1016,6 +1085,101 @@ export class StudioEngine {
     const blob = await new Promise<Blob | null>((resolve) => output.toBlob(resolve, "image/png"));
     if (!blob) throw new Error("没有生成 PNG。");
     return blob;
+  }
+
+  async captureClip(options: { width: number; height: number; round: boolean; transparent: boolean; frames: number; seconds: number }) {
+    const draft = this.draft;
+    if (!draft) throw new Error("场景还没准备好。");
+    const parent = this.renderer.domElement.parentElement;
+    const viewW = parent?.clientWidth ?? this.renderer.domElement.width;
+    const viewH = parent?.clientHeight ?? this.renderer.domElement.height;
+    const ratio = this.renderer.getPixelRatio();
+    const background = this.scene.background;
+    const fog = this.scene.fog;
+    const studio = this.studioFloor.visible;
+    const grass = this.grass.visible;
+    const nether = this.nether.visible;
+    const rays = this.rays.visible;
+    const shadowOpacity = (this.shadowFloor.material as ShadowMaterial).opacity;
+    const spin = this.holder.rotation.y;
+    const rings = [...this.rigs.values()].map((rig) => rig.ring.visible);
+    const output = document.createElement("canvas");
+    output.width = options.width;
+    output.height = options.height;
+    const context = output.getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("导出画布不可用。");
+    this.held = true;
+
+    try {
+      if (options.transparent) {
+        this.scene.background = null;
+        this.scene.fog = null;
+        this.studioFloor.visible = false;
+        this.grass.visible = false;
+        this.nether.visible = false;
+        this.rays.visible = false;
+        (this.shadowFloor.material as ShadowMaterial).opacity = 0.45;
+        this.renderer.setClearColor(0x000000, 0);
+      }
+      for (const rig of this.rigs.values()) rig.ring.visible = false;
+      this.renderer.setPixelRatio(1);
+      this.renderer.setSize(options.width, options.height, false);
+      this.camera.aspect = options.width / options.height;
+      this.camera.updateProjectionMatrix();
+
+      const gifFrames: GifFrame[] = [];
+      const delayCs = (options.seconds / options.frames) * 100;
+      for (let frame = 0; frame < options.frames; frame += 1) {
+        const time = (frame / options.frames) * options.seconds;
+        if (draft.clip === "none") {
+          this.holder.rotation.y = (time / options.seconds) * Math.PI * 2;
+          this.poseAll(0);
+        } else {
+          this.holder.rotation.y = 0;
+          this.poseAll(0, time);
+        }
+        for (const rig of this.rigs.values()) {
+          rig.nametag.quaternion.copy(this.camera.quaternion);
+          rig.bubble.quaternion.copy(this.camera.quaternion);
+        }
+        this.renderer.render(this.scene, this.camera);
+        context.save();
+        context.clearRect(0, 0, options.width, options.height);
+        if (options.round) {
+          context.beginPath();
+          context.arc(options.width / 2, options.height / 2, options.width / 2, 0, Math.PI * 2);
+          context.clip();
+        }
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = "high";
+        context.drawImage(this.renderer.domElement, 0, 0, options.width, options.height);
+        context.restore();
+        const pixels = context.getImageData(0, 0, options.width, options.height);
+        gifFrames.push({ rgba: pixels.data, delayCs });
+      }
+      const encoded = encodeGif(gifFrames, options.width, options.height);
+      return new Blob([Uint8Array.from(encoded)], { type: "image/gif" });
+    } finally {
+      this.holder.rotation.y = spin;
+      this.scene.background = background;
+      this.scene.fog = fog;
+      this.studioFloor.visible = studio;
+      this.grass.visible = grass;
+      this.nether.visible = nether;
+      this.rays.visible = rays;
+      (this.shadowFloor.material as ShadowMaterial).opacity = shadowOpacity;
+      if (background instanceof Color) this.renderer.setClearColor(background, 1);
+      else this.renderer.setClearColor(0x000000, 0);
+      [...this.rigs.values()].forEach((rig, index) => {
+        rig.ring.visible = rings[index] ?? false;
+      });
+      this.renderer.setPixelRatio(ratio);
+      this.renderer.setSize(viewW, viewH, false);
+      this.camera.aspect = viewW / Math.max(viewH, 1);
+      this.camera.updateProjectionMatrix();
+      this.poseAll(0);
+      this.held = false;
+    }
   }
 
   private disposeRig(rig: Rig) {
