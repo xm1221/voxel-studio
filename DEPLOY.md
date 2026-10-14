@@ -35,7 +35,7 @@ NEXT_PUBLIC_BASE_PATH=/mcrender npm run deploy:cf
 
 ## 玩家名查询的缓存
 
-`/mcrender/api/player` 先向 `api.minecraftservices.com` 查玩家，再向会话服务器要皮肤属性。Workers 出去访问这些 Mojang 接口经常拿到 403，这时改查 `playerdb.co`（同一个纹理属性）。皮肤和披风的 PNG 仍然从 `textures.minecraft.net` 下载，其它域名直接拒绝。结果收成 data URL 返回。
+`/mcrender/api/player` 先向 `api.minecraftservices.com` 查玩家，再向会话服务器要皮肤属性。Workers 出去访问这些 Mojang 接口经常拿到 403，这时改查 `playerdb.co`（同一个纹理属性）。皮肤和披风的 PNG 仍然从 `textures.minecraft.net` 下载，其它域名直接拒绝。Mojang 有时给出 `http://textures.minecraft.net/...`，下载前会先改成 https。结果收成 data URL 返回。
 
 - 成功结果：本机内存 30 分钟，响应头 `s-maxage=1800`，并写入 Workers Cache API。
 - 查无此人：缓存 2 分钟，避免同一个错名字反复打上游。

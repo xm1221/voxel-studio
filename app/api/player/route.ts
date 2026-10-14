@@ -171,6 +171,7 @@ async function lookupPlayerDb(name: string, known?: { id: string; name: string }
 
 async function readTexture(url: string) {
   const parsed = new URL(url);
+  if (parsed.protocol === "http:") parsed.protocol = "https:";
   if (parsed.protocol !== "https:" || parsed.hostname !== "textures.minecraft.net") {
     throw new Error("皮肤文件没有下下来。");
   }
