@@ -44,6 +44,7 @@ export type PlayerDraft = {
 };
 
 export type BackgroundId = "studio" | "noon" | "sunset" | "night" | "nether" | "none";
+export type BackgroundFit = "cover" | "contain";
 export type GradeId = "clean" | "hologram" | "ice" | "comic";
 export type OutlineId = "none" | "ink" | "sticker";
 export type LightId = "soft" | "hard" | "neon" | "moon";
@@ -54,6 +55,9 @@ export type SceneDraft = {
   players: PlayerDraft[];
   activeId: string;
   background: BackgroundId;
+  /** Data URL kept on this browser. Share links omit it. */
+  backgroundImage: string | null;
+  backgroundFit: BackgroundFit;
   grade: GradeId;
   outline: OutlineId;
   godrays: boolean;

@@ -5,11 +5,11 @@ import { createAlexSkin, createSteveSkin } from "@/lib/defaults";
 import { StudioEngine } from "@/lib/engine";
 import { FORMATS, formatById, gifFrameSize } from "@/lib/formats";
 import { CLIPS, clipExportSpanForPlayers } from "@/lib/motion";
-import { decodePayload, encodePayload, toPayload } from "@/lib/persist";
+import { backgroundImageFrom, decodePayload, encodePayload, toPayload } from "@/lib/persist";
 import { POSES } from "@/lib/poses";
 import { PRESET_STORAGE_KEY, mergePresets, newPresetId, parsePresetDocument, presetDocument, type UserPreset } from "@/lib/presets";
 import { inferModelType, loadImage, loadSkinToCanvas } from "@/lib/skin-image";
-import { STORAGE_KEY, defaultScene, makePlayer, requestPlayer, sceneFromPayload } from "@/lib/studio-state";
+import { STORAGE_KEY, defaultScene, makePlayer, requestPlayer, resetPlayer, resetSceneLook, sceneFromPayload } from "@/lib/studio-state";
 import type { CameraSnapshot, Joints, PlayerDraft, SceneDraft } from "@/lib/types";
 
 let builtinSkins: { steve: string; alex: string } | null = null;
@@ -73,6 +73,7 @@ export function Studio() {
   const engineRef = useRef<StudioEngine | null>(null);
   const sceneRef = useRef<SceneDraft | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const backgroundFileRef = useRef<HTMLInputElement>(null);
   const presetFileRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [message, setMessage] = useState<string | null>(null);
@@ -299,6 +300,53 @@ export function Studio() {
     setMessage(`导入了 ${parsed.presets.length} 个姿势。`);
   }
 
+  function resetActivePlayer() {
+    patch((current) => ({
+      ...current,
+      players: current.players.map((player) => (player.id === current.activeId ? resetPlayer(player) : player)),
+    }));
+    setMessage("已恢复这个角色的姿势、动作和位置。");
+  }
+
+  function resetSceneToDefault() {
+    patch((current) => resetSceneLook(current));
+    setMessage("场景灯光和背景已恢复默认。");
+  }
+
+  async function ingestBackground(file: File) {
+    const type = file.type.toLowerCase();
+    const name = file.name.toLowerCase();
+    const allowed =
+      type === "image/png" ||
+      type === "image/jpeg" ||
+      type === "image/webp" ||
+      name.endsWith(".png") ||
+      name.endsWith(".jpg") ||
+      name.endsWith(".jpeg") ||
+      name.endsWith(".webp");
+    if (!allowed) {
+      setError("请放 PNG、JPG 或 WebP 背景图。");
+      return;
+    }
+    if (file.size > 12 * 1024 * 1024) {
+      setError("背景图请小于 12MB。");
+      return;
+    }
+    try {
+      const url = await fileToDataUrl(file);
+      const image = await loadBackground(url);
+      const stored = compressBackground(image, url);
+      if (!backgroundImageFrom(stored)) {
+        setError("这张背景图读不了。");
+        return;
+      }
+      patch((current) => ({ ...current, backgroundImage: stored }));
+      setMessage("背景图已换上。它只留在这台浏览器，分享链接里没有。");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "这张背景图读不了。");
+    }
+  }
+
   function patch(next: (current: SceneDraft) => SceneDraft) {
     setScene((current) => (current ? next(current) : current));
   }
@@ -434,7 +482,7 @@ export function Studio() {
         width: size.width,
         height: size.height,
         round: format.round,
-        transparent: scene.background === "none",
+        transparent: scene.background === "none" && !scene.backgroundImage,
         frames: span.frames,
         seconds: span.seconds,
       });
@@ -462,7 +510,12 @@ export function Studio() {
     try {
       await navigator.clipboard.writeText(url);
       const uploaded = scene.players.some((player) => player.source === "upload");
-      setMessage(uploaded ? "链接已复制。上传的皮肤只留在这台设备上，别人打开会看到 Steve。" : "链接已复制，姿势、灯光和机位都在里面。");
+      const background = Boolean(scene.backgroundImage);
+      const note = [
+        uploaded ? "上传的皮肤只留在这台设备上" : "",
+        background ? "背景图只留在这台设备上" : "",
+      ].filter(Boolean);
+      setMessage(note.length ? `链接已复制。${note.join("，")}。` : "链接已复制，姿势、灯光和机位都在里面。");
     } catch {
       setMessage("链接已经写进地址栏，复制地址就能分享。");
     }
@@ -604,7 +657,63 @@ export function Studio() {
                 </div>
               </section>
               <section className="block">
-                <h2>角色</h2>
+                <div className="section-head">
+                  <h2>场景</h2>
+                  <button className="btn ghost" type="button" onClick={resetSceneToDefault}>
+                    恢复场景
+                  </button>
+                </div>
+                <p className="hint scene-hint">
+                  {scene.backgroundImage
+                    ? "正在铺上传的背景图，预设地面先藏起来，脚下还留着影子。图片只存在这台浏览器，分享链接和透明 PNG 都不带它。"
+                    : "地面和天空会一起换。上传的背景图只留在这台浏览器，不会进分享链接。"}
+                </p>
+                <div className="row scene-chips">
+                  {BACKGROUNDS.map(([id, label]) => (
+                    <button key={id} type="button" className={scene.background === id ? "chip active" : "chip"} onClick={() => patch((current) => ({ ...current, background: id }))}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="row" style={{ marginTop: 8 }}>
+                  <button className="btn" type="button" onClick={() => backgroundFileRef.current?.click()}>
+                    上传背景图
+                  </button>
+                  <button
+                    className="btn ghost"
+                    type="button"
+                    disabled={!scene.backgroundImage}
+                    onClick={() => patch((current) => ({ ...current, backgroundImage: null }))}
+                  >
+                    移除
+                  </button>
+                  <button type="button" className={scene.backgroundFit === "cover" ? "chip active" : "chip"} onClick={() => patch((current) => ({ ...current, backgroundFit: "cover" }))}>
+                    铺满
+                  </button>
+                  <button type="button" className={scene.backgroundFit === "contain" ? "chip active" : "chip"} onClick={() => patch((current) => ({ ...current, backgroundFit: "contain" }))}>
+                    完整
+                  </button>
+                </div>
+                <input
+                  ref={backgroundFileRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"
+                  hidden
+                  aria-label="上传背景图"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = "";
+                    if (file) void ingestBackground(file);
+                  }}
+                />
+              </section>
+              <section className="block">
+                <div className="section-head">
+                  <h2>角色</h2>
+                  <button className="btn reset" type="button" onClick={resetActivePlayer} title="姿势回到站立，动作回到呼吸，速度、位置、缩放复原，并清掉名牌和气泡">
+                    恢复默认
+                  </button>
+                </div>
                 <div className="player-list">
                   {scene.players.map((player) => (
                     <div key={player.id} className={player.id === scene.activeId ? "player active" : "player"}>
@@ -711,7 +820,12 @@ export function Studio() {
               </section>
 
               <section className="block">
-                <h2>姿势</h2>
+                <div className="section-head">
+                  <h2>姿势</h2>
+                  <button className="btn ghost" type="button" onClick={resetActivePlayer}>
+                    恢复默认
+                  </button>
+                </div>
                 <div className="poses">
                   {POSES.map((pose) => (
                     <button
@@ -946,17 +1060,6 @@ export function Studio() {
               </section>
 
               <section className="block">
-                <h2>场景</h2>
-                <div className="row">
-                  {BACKGROUNDS.map(([id, label]) => (
-                    <button key={id} type="button" className={scene.background === id ? "chip active" : "chip"} onClick={() => patch((current) => ({ ...current, background: id }))}>
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </section>
-
-              <section className="block">
                 <h2>导出尺寸</h2>
                 <div className="formats">
                   {FORMATS.map((format) => (
@@ -975,6 +1078,29 @@ export function Studio() {
       </div>
     </div>
   );
+}
+
+function loadBackground(url: string) {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("这张背景图读不了。"));
+    image.src = url;
+  });
+}
+
+function compressBackground(image: HTMLImageElement, original: string) {
+  const maxEdge = 1920;
+  const largest = Math.max(image.naturalWidth, image.naturalHeight);
+  if (largest <= maxEdge && original.length <= 1_500_000 && backgroundImageFrom(original)) return original;
+  const scale = Math.min(1, maxEdge / Math.max(largest, 1));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("画布不可用。");
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.85);
 }
 
 function downloadPresets(presets: UserPreset[]) {

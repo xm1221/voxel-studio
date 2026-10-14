@@ -149,6 +149,11 @@ button {
   font-weight: 650;
 }
 
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .btn.primary:disabled {
   opacity: 0.55;
   cursor: progress;
@@ -236,6 +241,32 @@ button {
   text-transform: uppercase;
   color: var(--muted);
   font-weight: 650;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.section-head h2 {
+  margin: 0;
+}
+
+.btn.reset {
+  border-color: rgba(47, 111, 237, 0.55);
+  color: var(--accent-2);
+  font-weight: 650;
+}
+
+.scene-hint {
+  margin: 0 0 10px;
+}
+
+.scene-chips {
+  gap: 8px;
 }
 
 .row {

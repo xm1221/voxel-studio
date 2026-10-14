@@ -1,4 +1,4 @@
-import type { Joints } from "./types";
+import type { Joints, PlayerDraft } from "./types";
 
 export type PosePreset = {
   id: string;
@@ -132,4 +132,19 @@ export const POSES: PosePreset[] = [
 
 export function poseById(id: string): PosePreset {
   return POSES.find((pose) => pose.id === id) ?? POSES[0];
+}
+
+/** Idle pose, breathing clip, origin, and empty labels. Skin, cape, and layers stay. */
+export function resetPlayer(player: PlayerDraft): PlayerDraft {
+  return {
+    ...player,
+    poseId: "idle",
+    joints: { ...poseById("idle").joints },
+    clip: "idle",
+    clipSpeed: 1,
+    position: { x: 0, y: 0, z: 0 },
+    scale: 1,
+    nametag: "",
+    bubble: "",
+  };
 }

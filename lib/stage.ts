@@ -7,6 +7,7 @@ import {
   DoubleSide,
   Fog,
   Group,
+  LinearFilter,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
@@ -18,16 +19,11 @@ import {
   WebGLRenderer,
   type Texture,
 } from "three";
-import type { BackgroundId, SceneDraft } from "./types";
+import type { SceneDraft } from "./types";
 import { FOOT_Y } from "./rig/layout";
+import { BACKGROUNDS, backgroundDrawRect, stageLook } from "./stage-look";
 
-export const BACKGROUNDS: Record<Exclude<BackgroundId, "none">, number> = {
-  studio: 0xe4eef9,
-  noon: 0x79b4ea,
-  sunset: 0xe08a52,
-  night: 0x0d1424,
-  nether: 0x401512,
-};
+export type BackdropDraft = Pick<SceneDraft, "background" | "godrays" | "light" | "backgroundImage" | "backgroundFit">;
 
 export type StageSet = {
   shadowFloor: Mesh;
@@ -37,6 +33,8 @@ export type StageSet = {
   rays: Group;
   rayMat: MeshBasicMaterial;
   backgroundColor: Color;
+  setBackdrop: (draft: BackdropDraft) => void;
+  present: (scene: Scene, renderer: WebGLRenderer) => void;
   dispose: () => void;
 };
 
@@ -136,7 +134,114 @@ export function createStage(scene: Scene): StageSet {
   rays.visible = false;
   scene.add(rays);
 
+  const backdrop = document.createElement("canvas");
+  const backdropTex = new CanvasTexture(backdrop);
+  backdropTex.colorSpace = SRGBColorSpace;
+  backdropTex.magFilter = LinearFilter;
+  backdropTex.minFilter = LinearFilter;
+  backdropTex.generateMipmaps = false;
+  let desired: BackdropDraft = {
+    background: "studio",
+    godrays: false,
+    light: "soft",
+    backgroundImage: null,
+    backgroundFit: "cover",
+  };
+  let loadedUrl: string | null = null;
+  let source: HTMLImageElement | null = null;
+  let paintKey = "";
+  let shownMode = "";
+
+  function paintBackdrop(width: number, height: number, sky: number | null) {
+    if (!source || width < 2 || height < 2) return false;
+    const key = `${width}x${height}:${desired.backgroundFit}:${sky ?? 0}`;
+    if (key === paintKey && sceneBackgroundIsTexture) return true;
+    const rect = backgroundDrawRect(source.naturalWidth || source.width, source.naturalHeight || source.height, width, height, desired.backgroundFit);
+    backdrop.width = width;
+    backdrop.height = height;
+    const context = backdrop.getContext("2d");
+    if (!context) return false;
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.fillStyle = `#${(sky ?? 0xd5e4f6).toString(16).padStart(6, "0")}`;
+    context.fillRect(0, 0, width, height);
+    context.drawImage(source, rect.x, rect.y, rect.width, rect.height);
+    backdropTex.needsUpdate = true;
+    paintKey = key;
+    return true;
+  }
+
+  let sceneBackgroundIsTexture = false;
+
+  function setBackdrop(draft: BackdropDraft) {
+    const nextUrl = draft.backgroundImage || null;
+    desired = {
+      background: draft.background,
+      godrays: draft.godrays,
+      light: draft.light,
+      backgroundImage: nextUrl,
+      backgroundFit: draft.backgroundFit === "contain" ? "contain" : "cover",
+    };
+    if (nextUrl === loadedUrl) return;
+    loadedUrl = nextUrl;
+    source = null;
+    paintKey = "";
+    shownMode = "";
+    sceneBackgroundIsTexture = false;
+    if (!nextUrl) return;
+    const image = new Image();
+    const url = nextUrl;
+    image.onload = () => {
+      if (loadedUrl !== url) return;
+      source = image;
+      paintKey = "";
+      shownMode = "";
+      sceneBackgroundIsTexture = false;
+    };
+    image.onerror = () => {
+      if (loadedUrl !== url) return;
+      source = null;
+      shownMode = "";
+    };
+    image.src = url;
+  }
+
+  function present(scene: Scene, renderer: WebGLRenderer) {
+    const look = stageLook(desired);
+    const width = renderer.domElement.width;
+    const height = renderer.domElement.height;
+    const painted = look.customImage && paintBackdrop(width, height, look.sky);
+    if (painted) {
+      if (shownMode !== "image") {
+        scene.background = backdropTex;
+        scene.fog = null;
+        renderer.setClearColor(0x000000, 0);
+        shownMode = "image";
+        sceneBackgroundIsTexture = true;
+      }
+      return;
+    }
+    sceneBackgroundIsTexture = false;
+    if (look.sky == null) {
+      if (shownMode !== "clear") {
+        scene.background = null;
+        scene.fog = null;
+        renderer.setClearColor(0x000000, 0);
+        shownMode = "clear";
+      }
+      return;
+    }
+    const colorKey = `${look.sky}:${look.fog}`;
+    if (shownMode === colorKey) return;
+    backgroundColor.set(look.sky);
+    scene.background = backgroundColor;
+    scene.fog = look.fog ? new Fog(look.sky, 80, 230) : null;
+    renderer.setClearColor(look.sky, 1);
+    shownMode = colorKey;
+  }
+
   const textures = [studioMap, grassTop, grassSide, dirt, netherSide, netherTop];
+  const backgroundColor = new Color(BACKGROUNDS.studio);
   return {
     shadowFloor,
     studioFloor,
@@ -144,7 +249,9 @@ export function createStage(scene: Scene): StageSet {
     nether,
     rays,
     rayMat,
-    backgroundColor: new Color(BACKGROUNDS.studio),
+    backgroundColor,
+    setBackdrop,
+    present,
     dispose() {
       for (const texture of textures) texture.dispose();
       shadowFloor.geometry.dispose();
@@ -152,28 +259,21 @@ export function createStage(scene: Scene): StageSet {
       studioFloor.geometry.dispose();
       (studioFloor.material as MeshStandardMaterial).dispose();
       rayMat.dispose();
+      backdropTex.dispose();
     },
   };
 }
 
 export function applyStage(stage: StageSet, scene: Scene, renderer: WebGLRenderer, draft: SceneDraft) {
-  const color = draft.background === "none" ? null : BACKGROUNDS[draft.background];
-  if (color == null) {
-    scene.background = null;
-    scene.fog = null;
-    renderer.setClearColor(0x000000, 0);
-  } else {
-    stage.backgroundColor.set(color);
-    scene.background = stage.backgroundColor;
-    scene.fog = draft.background === "studio" ? null : new Fog(color, 80, 230);
-    renderer.setClearColor(color, 1);
-  }
-  stage.studioFloor.visible = draft.background === "studio";
-  stage.grass.visible = draft.background === "noon" || draft.background === "sunset" || draft.background === "night";
-  stage.nether.visible = draft.background === "nether";
-  stage.shadowFloor.visible = true;
-  (stage.shadowFloor.material as ShadowMaterial).opacity = draft.background === "none" ? 0.45 : 0.28;
-  stage.rays.visible = draft.godrays && draft.background !== "none";
-  stage.rayMat.color.set(draft.background === "night" || draft.light === "moon" ? 0xc5d7ff : draft.background === "nether" ? 0xff7844 : 0xfff0d0);
-  stage.rayMat.opacity = draft.background === "noon" ? 0.07 : 0.11;
+  const look = stageLook(draft);
+  stage.studioFloor.visible = look.studioFloor;
+  stage.grass.visible = look.grass;
+  stage.nether.visible = look.nether;
+  stage.shadowFloor.visible = look.shadowFloor;
+  (stage.shadowFloor.material as ShadowMaterial).opacity = look.shadowOpacity;
+  stage.rays.visible = look.rays;
+  stage.rayMat.color.set(look.rayColor);
+  stage.rayMat.opacity = look.rayOpacity;
+  stage.setBackdrop(draft);
+  stage.present(scene, renderer);
 }

@@ -12,23 +12,29 @@ Pixelstage 会挂在 `https://tools.xm1221.cn/mcrender`。页面、静态资源�
 
 ## 构建
 
+线上路径是 `/mcrender`。**构建时必须带上 `NEXT_PUBLIC_BASE_PATH=/mcrender`。** 漏了的话，页面、`/_next` 和 `/api/player` 都会去根路径找文件，`https://tools.xm1221.cn/mcrender` 整站 404。Next 在构建时就把这个值写进客户端包，部署之后再改环境变量来不及。
+
+仓库里已经接了三道，避免再漏：
+
+1. [`.env.production`](.env.production) 写着 `NEXT_PUBLIC_BASE_PATH=/mcrender`。`next build` 会读它。`next dev` 不读，本地仍是 `/`。
+2. `package.json` 里的 `build:cf`、`preview:cf`、`deploy:cf` 也会自己带上这个变量。
+3. `next.config.ts` 在生产构建里如果发现变量没设，会退回 `/mcrender`。要故意打一个挂在 `/` 的生产包，把 `NEXT_PUBLIC_BASE_PATH` 设成空字符串。
+
 ```bash
 npm install
-NEXT_PUBLIC_BASE_PATH=/mcrender npm run build:cf
+npm run build:cf
 ```
-
-`NEXT_PUBLIC_BASE_PATH` 必须在构建时就定下来，Next 会把它写进客户端包。本地开发不要设这个变量，站点仍在 `/`。
 
 预览 Workers 运行时：
 
 ```bash
-NEXT_PUBLIC_BASE_PATH=/mcrender npm run preview:cf
+npm run preview:cf
 ```
 
 正式发布（需要本机已 `wrangler login`，并且账号能创建 Worker `pixelstage`）：
 
 ```bash
-NEXT_PUBLIC_BASE_PATH=/mcrender npm run deploy:cf
+npm run deploy:cf
 ```
 
 本仓库不包含自动发布。`wrangler.jsonc` 里的 Worker 名称是 `pixelstage`。在 Cloudflare 上把 `tools.xm1221.cn/mcrender*` 指到这个 Worker。如果这台域名上已经有别的 Worker，用路由只匹配 `/mcrender` 开头的路径，不要抢走整站。

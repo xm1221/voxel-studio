@@ -32,6 +32,7 @@ export async function captureStill(
   host.renderer.setSize(options.width * sample, options.height * sample, false);
   host.camera.aspect = options.width / options.height;
   host.camera.updateProjectionMatrix();
+  if (!options.transparent) host.stage.present(host.scene, host.renderer);
   host.renderer.render(host.scene, host.camera);
 
   const output = document.createElement("canvas");
@@ -83,6 +84,7 @@ export async function captureClip(
     host.renderer.setSize(options.width, options.height, false);
     host.camera.aspect = options.width / options.height;
     host.camera.updateProjectionMatrix();
+    if (!options.transparent) host.stage.present(host.scene, host.renderer);
 
     const gifFrames: GifFrame[] = [];
     const delayCs = (options.seconds / options.frames) * 100;
@@ -174,4 +176,5 @@ function restoreWorld(host: CaptureHost, saved: WorldSnapshot, ratio: number, vi
   host.renderer.setSize(viewW, viewH, false);
   host.camera.aspect = viewW / Math.max(viewH, 1);
   host.camera.updateProjectionMatrix();
+  host.stage.present(host.scene, host.renderer);
 }

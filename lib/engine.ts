@@ -186,6 +186,7 @@ export class StudioEngine {
       rig.nametag.quaternion.copy(this.camera.quaternion);
       rig.bubble.quaternion.copy(this.camera.quaternion);
     }
+    this.stage.present(this.scene, this.renderer);
     this.renderer.render(this.scene, this.camera);
   };
 
