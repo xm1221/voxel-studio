@@ -20,7 +20,7 @@ import {
   type Material,
   type Texture,
 } from "three";
-import type { Joints, ModelType } from "../types";
+import type { Joints, ModelType, PlayerDraft } from "../types";
 import { createBentBox, deformBend } from "./bend";
 import { ARM, LEG, SIT_DROP, isSitting } from "./layout";
 import type { BendJoint } from "./layers";
@@ -92,6 +92,8 @@ export type Rig = {
   capeTexture: CanvasTexture | null;
   lastTag: string;
   lastBubble: string;
+  clipTime: number;
+  lastClip: string;
 };
 
 function cutout(factor: number, units: number) {
@@ -433,6 +435,8 @@ export function buildRig(model: ModelType, gradient: Texture): Rig {
     capeTexture: null,
     lastTag: "",
     lastBubble: "",
+    clipTime: 0,
+    lastClip: "",
   };
 }
 
@@ -440,7 +444,8 @@ export function applyJoints(
   rig: Rig,
   joints: Joints,
   x: number,
-  extra: { bob: number; sway: number; roll: number; cape: number },
+  extra: { bob: number; sway: number; roll: number; cape: number; yaw?: number },
+  transform: Pick<PlayerDraft, "position" | "scale">,
 ) {
   rig.head.rotation.set(joints.headX * DEG, joints.headY * DEG, 0);
   rig.body.rotation.set(joints.bodyX * DEG, 0, 0);
@@ -453,8 +458,13 @@ export function applyJoints(
   rig.lHip.rotation.set(joints.lLegX * DEG, 0, 0);
   rig.lKnee.rotation.set(joints.lKnee * DEG, 0, 0);
   for (const bend of rig.bends) deformBend(bend.geometry, bend.pivotY, joints[bend.joint] * DEG);
-  rig.root.rotation.set(0, 0, extra.roll * DEG);
-  rig.root.position.set(x + extra.sway, (isSitting(joints) ? SIT_DROP : 0) + extra.bob, 0);
+  rig.root.rotation.set(0, extra.yaw ?? 0, extra.roll * DEG);
+  rig.root.position.set(
+    x + extra.sway + transform.position.x,
+    (isSitting(joints) ? SIT_DROP : 0) + extra.bob + transform.position.y,
+    transform.position.z,
+  );
+  rig.root.scale.setScalar(transform.scale);
   rig.cape.rotation.set((CAPE_REST + extra.cape) * DEG, Math.PI, 0);
 }
 

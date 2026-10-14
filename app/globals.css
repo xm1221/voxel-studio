@@ -26,13 +26,15 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
   color: inherit;
 }
 
 button {
   cursor: pointer;
+  touch-action: manipulation;
 }
 
 .studio {
@@ -114,6 +116,13 @@ button {
   justify-content: flex-end;
 }
 
+.mobile-menu,
+.drawer-head,
+.mobile-tools,
+.drawer-backdrop {
+  display: none;
+}
+
 .btn,
 .chip,
 .pose,
@@ -122,6 +131,7 @@ button {
   background: var(--panel);
   border-radius: 999px;
   padding: 8px 12px;
+  min-height: 40px;
   transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
 }
 
@@ -149,6 +159,7 @@ button {
 }
 
 .stage {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
   min-height: 0;
@@ -206,6 +217,8 @@ button {
 
 .aside {
   overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   border-left: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.96);
   padding: 8px 14px 28px;
@@ -270,6 +283,8 @@ button {
   background: transparent;
   color: var(--muted);
   padding: 4px 6px;
+  min-width: 40px;
+  min-height: 40px;
 }
 
 .poses {
@@ -368,7 +383,9 @@ button {
 
 input[type="range"] {
   width: 100%;
+  min-height: 32px;
   accent-color: var(--accent);
+  touch-action: pan-y;
 }
 
 .field {
@@ -422,30 +439,124 @@ input[type="range"] {
 
 @media (max-width: 960px) {
   .studio {
-    height: auto;
-    min-height: 100dvh;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .topbar {
-    align-items: stretch;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  .brand {
+    min-width: 0;
+  }
+
+  .search {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    min-width: 0;
+  }
+
+  .search input {
+    height: 44px;
+  }
+
+  .desktop-actions {
+    display: none;
+  }
+
+  .mobile-menu {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 68px;
   }
 
   .stage {
     grid-template-columns: 1fr;
+    overflow: hidden;
   }
 
   .viewport {
-    height: 68dvh;
+    height: 100%;
+    min-height: 0;
   }
 
   .aside {
-    border-left: 0;
-    border-top: 1px solid var(--line);
+    position: fixed;
+    z-index: 12;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(92vw, 380px);
+    padding: 8px 14px 32px;
+    border-top: 0;
+    border-left: 1px solid var(--line);
+    box-shadow: -18px 0 44px rgba(22, 50, 92, 0.16);
+    transform: translateX(102%);
+    transition: transform 0.22s ease;
+  }
+
+  .aside.open {
+    transform: translateX(0);
+  }
+
+  .drawer-backdrop {
+    position: fixed;
+    z-index: 11;
+    inset: 0;
+    display: block;
+    border: 0;
+    padding: 0;
+    background: rgba(22, 50, 92, 0.28);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.22s ease;
+  }
+
+  .drawer-backdrop.show {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .drawer-head {
+    position: sticky;
+    z-index: 1;
+    top: -8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 0 12px;
+    background: rgba(255, 255, 255, 0.98);
+  }
+
+  .drawer-head strong {
+    font-size: 14px;
+  }
+
+  .mobile-tools {
+    display: block;
+  }
+
+  .slider {
+    grid-template-columns: 58px minmax(0, 1fr) 42px;
+    gap: 10px;
+    padding: 4px 0;
+  }
+
+  .hud {
+    left: 12px;
+    bottom: 12px;
   }
 
   .poses {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
@@ -454,7 +565,11 @@ input[type="range"] {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .actions {
-    width: 100%;
+  .brand strong {
+    font-size: 17px;
+  }
+
+  .hud span:last-child {
+    display: none;
   }
 }
