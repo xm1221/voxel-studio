@@ -3,7 +3,7 @@ import {
   Group,
   Mesh,
   NearestFilter,
-  PCFShadowMap,
+  PCFSoftShadowMap,
   PerspectiveCamera,
   Scene,
   SRGBColorSpace,
@@ -54,7 +54,7 @@ export class StudioEngine {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.outputColorSpace = SRGBColorSpace;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = PCFShadowMap;
+    this.renderer.shadowMap.type = PCFSoftShadowMap;
     this.renderer.setClearColor(0x000000, 0);
     const canvas = this.renderer.domElement;
     canvas.style.width = "100%";
@@ -67,9 +67,9 @@ export class StudioEngine {
     container.appendChild(canvas);
 
     this.camera = new PerspectiveCamera(32, 1, 0.1, 400);
-    this.camera.position.set(44, 14, 48);
+    this.camera.position.set(26, 10, 64);
     this.controls = new OrbitControls(this.camera, canvas);
-    this.controls.target.set(0, -1, 0);
+    this.controls.target.set(0, 2, 0);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
     this.controls.minDistance = 16;
@@ -257,20 +257,7 @@ export class StudioEngine {
       rig.texture.image = canvas;
     }
     rig.texture.needsUpdate = true;
-    const materials = [
-      rig.inner,
-      rig.limb,
-      rig.limbJoint,
-      rig.outer,
-      rig.outerLimb,
-      rig.outerJoint,
-      rig.toonInner,
-      rig.toonLimb,
-      rig.toonLimbJoint,
-      rig.toonOuter,
-      rig.toonOuterLimb,
-      rig.toonOuterJoint,
-    ];
+    const materials = [rig.inner, rig.limb, rig.outer, rig.outerLimb, rig.toonInner, rig.toonLimb, rig.toonOuter, rig.toonOuterLimb];
     for (const material of materials) {
       material.map = rig.texture;
       if (material.emissiveMap) material.emissiveMap = rig.texture;
@@ -304,9 +291,9 @@ export class StudioEngine {
   }
 
   frameBody(count: number) {
-    const distance = Math.max(56, 42 + count * 14);
-    this.camera.position.set(distance * 0.72, distance * 0.24, distance * 0.82);
-    this.controls.target.set(0, -1, 0);
+    const distance = Math.max(64, 46 + count * 16);
+    this.camera.position.set(distance * 0.38, 9, distance);
+    this.controls.target.set(0, 2, 0);
     this.controls.update();
   }
 

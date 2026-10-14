@@ -1,76 +1,55 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { poseById } from "../lib/poses.ts";
-import { FOOT_Y, OVERLAP, planLimbs, plantedFootY, rotateX, seatShift, sitAmount } from "../lib/rig/layout.ts";
+import { POSES } from "../lib/poses.ts";
+import { ARM, LEG, SIT_DROP, SKIN_LIFT, isSitting, measureSide } from "../lib/rig/layout.ts";
 
-describe("limb layout", () => {
-  it("keeps a wide arm 12 pixels long and coaxial through the elbow", () => {
-    const arm = planLimbs("default").find((plan) => plan.id === "rightArm");
-    assert.ok(arm);
-    assert.deepEqual(arm.pivot, [-4, 0, 0]);
-    assert.equal(arm.upper.center[0], -2);
-    assert.equal(arm.upper.size[0], 4);
-    const top = arm.upper.center[1] + arm.upper.size[1] / 2;
-    assert.ok(Math.abs(top) < 1e-6);
-    assert.deepEqual(arm.joint, [-2, -6, 0]);
-    assert.equal(arm.lower.center[0], 0);
-    assert.equal(arm.lower.center[2], 0);
-    const upperX = arm.upper.center[0] - arm.upper.size[0] / 2;
-    const lowerX = arm.joint[0] + arm.lower.center[0] - arm.lower.size[0] / 2;
-    assert.equal(upperX, lowerX);
-    const overlap = arm.lower.center[1] + arm.lower.size[1] / 2;
-    assert.ok(Math.abs(overlap - OVERLAP) < 1e-6);
-    const sole = arm.joint[1] + arm.lower.center[1] - arm.lower.size[1] / 2;
-    assert.ok(Math.abs(sole - -12) < 1e-6);
+const HEAD = { minX: -4, maxX: 4, minY: SKIN_LIFT, maxY: SKIN_LIFT + 8, minZ: -4, maxZ: 4 };
+
+function dist(a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }) {
+  return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+describe("noon skeleton", () => {
+  it("hangs a wide arm from the torso's top corner", () => {
+    const arm = measureSide("default", "right", POSES[0].joints);
+    assert.ok(Math.abs(arm.shoulder.x - -ARM.shoulderX) < 1e-6);
+    assert.ok(Math.abs(arm.shoulder.y - (SKIN_LIFT + ARM.shoulderY)) < 1e-6);
+    assert.ok(Math.abs(arm.shoulder.z) < 1e-6);
+    const slim = measureSide("slim", "left", POSES[0].joints);
+    assert.ok(Math.abs(slim.shoulder.x - ARM.shoulderX) < 1e-6);
   });
 
-  it("uses a 3 pixel arm for slim skins and mirrors the left shoulder", () => {
-    const limbs = planLimbs("slim");
-    const right = limbs.find((plan) => plan.id === "rightArm");
-    const left = limbs.find((plan) => plan.id === "leftArm");
-    assert.equal(right?.upper.size[0], 3);
-    assert.equal(right?.pivot[0], -4);
-    assert.equal(right?.upper.center[0], -1.5);
-    assert.equal(left?.pivot[0], 4);
-    assert.equal(left?.upper.center[0], 1.5);
-    assert.equal(left?.uv.w, 3);
-    assert.equal(left?.overlay.u, 48);
+  it("keeps the hip on the bottom of the torso", () => {
+    const leg = measureSide("default", "right", POSES[0].joints);
+    assert.ok(Math.abs(leg.hip.x - -LEG.hipX) < 1e-6);
+    assert.ok(Math.abs(leg.hip.y - (SKIN_LIFT + LEG.hipY)) < 1e-6);
+    assert.ok(Math.abs(leg.hip.z - LEG.hipZ) < 1e-6);
   });
 
-  it("hinges the knee at the center of the leg", () => {
-    const leg = planLimbs("default").find((plan) => plan.id === "rightLeg");
-    assert.ok(leg);
-    assert.equal(leg.hingeSign, 1);
-    assert.equal(leg.joint[2], 0);
-    assert.equal(leg.lower.center[0], 0);
-    assert.equal(leg.lower.center[2], 0);
-    assert.equal(leg.pivot[1], -12);
-  });
-});
-
-describe("sitting", () => {
-  it("does not drop a standing or walking pose", () => {
-    assert.equal(sitAmount(poseById("idle").joints), 0);
-    assert.deepEqual(seatShift(poseById("walk").joints), { y: 0, hipForward: 0, amount: 0 });
-  });
-
-  it("plants both soles on the floor and keeps the thighs in front of the belly", () => {
-    const joints = poseById("sit").joints;
-    const shift = seatShift(joints);
-    assert.equal(shift.amount, 1);
-    const leg = planLimbs("default").find((plan) => plan.id === "rightLeg");
-    assert.ok(leg);
-    const lowest = plantedFootY(leg, joints.rLegX, joints.rKnee);
-    assert.ok(Math.abs(lowest + shift.y - FOOT_Y) < 1e-6);
-
-    const [, height, depth] = leg.upper.size;
-    const [, cy, cz] = leg.upper.center;
-    for (const y of [-height / 2, height / 2]) {
-      for (const z of [-depth / 2, depth / 2]) {
-        const [pitchedY, pitchedZ] = rotateX(cy + y, cz + z, joints.rLegX);
-        if (pitchedY <= 0.05) continue;
-        const worldZ = leg.pivot[2] + shift.hipForward + pitchedZ;
-        assert.ok(worldZ > 2, `thigh corner rises into the belly at z=${worldZ}`);
+  it("keeps every preset's segments joined and the shoulder planted", () => {
+    const standingShoulder = measureSide("default", "right", POSES[0].joints).shoulder;
+    const upperReach = Math.hypot(1, Math.abs(ARM.elbowY));
+    for (const preset of POSES) {
+      for (const side of ["right", "left"] as const) {
+        const points = measureSide("default", side, preset.joints);
+        assert.ok(Math.abs(dist(points.shoulder, points.elbow) - upperReach) < 1e-6, `${preset.id} ${side} upper arm`);
+        assert.ok(Math.abs(dist(points.elbow, points.wrist) - ARM.lowerH) < 1e-6, `${preset.id} ${side} forearm`);
+        assert.ok(Math.abs(dist(points.hip, points.knee) - Math.abs(LEG.kneeY)) < 1e-6, `${preset.id} ${side} thigh`);
+        assert.ok(Math.abs(dist(points.knee, points.ankle) - LEG.height) < 1e-6, `${preset.id} ${side} shin`);
+        const drop = isSitting(preset.joints) ? SIT_DROP : 0;
+        assert.ok(Math.abs(points.shoulder.y - (standingShoulder.y + drop)) < 1e-6, `${preset.id} shoulder height`);
+        assert.ok(Math.abs(points.hip.y - (SKIN_LIFT + LEG.hipY + drop)) < 1e-6, `${preset.id} hip stays on the torso`);
+        if (preset.id === "idle") {
+          assert.ok(Math.abs(points.ankle.y - -15.65) < 0.02, `${preset.id} feet`);
+          const inside =
+            points.wrist.x > HEAD.minX &&
+            points.wrist.x < HEAD.maxX &&
+            points.wrist.y > HEAD.minY &&
+            points.wrist.y < HEAD.maxY &&
+            points.wrist.z > HEAD.minZ &&
+            points.wrist.z < HEAD.maxZ;
+          assert.equal(inside, false, `${preset.id} ${side} wrist inside the head`);
+        }
       }
     }
   });

@@ -23,12 +23,11 @@ export function createLights(scene: Scene): StudioLights {
   scene.add(hemi);
   scene.add(new AmbientLight(0xffffff, 0.18));
   const key = new DirectionalLight(0xfff1dc, 2.35);
-  key.position.set(8, 96, 14);
-  key.target.position.set(0, -8, 0);
+  key.position.set(28, 52, 34);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
-  key.shadow.bias = -0.00045;
-  key.shadow.normalBias = 0.02;
+  key.shadow.bias = -0.0004;
+  key.shadow.normalBias = 0;
   scene.add(key, key.target);
   const fill = new DirectionalLight(0xc9d6ff, 0.85);
   fill.position.set(-36, 18, 28);

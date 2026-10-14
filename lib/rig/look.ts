@@ -6,23 +6,21 @@ export function applyLook(rig: Rig, grade: GradeId, outline: OutlineId, showOute
   const materialFor = (kind: PartKind) => {
     if (kind === "inner") return comic ? rig.toonInner : rig.inner;
     if (kind === "limb") return comic ? rig.toonLimb : rig.limb;
-    if (kind === "limbJoint") return comic ? rig.toonLimbJoint : rig.limbJoint;
     if (kind === "outer") return comic ? rig.toonOuter : rig.outer;
-    if (kind === "outerJoint") return comic ? rig.toonOuterJoint : rig.outerJoint;
     return comic ? rig.toonOuterLimb : rig.outerLimb;
   };
   for (const part of rig.parts) {
     part.mesh.material = materialFor(part.kind);
-    part.mesh.visible = showOuter || part.kind === "inner" || part.kind === "limb" || part.kind === "limbJoint";
+    part.mesh.visible = showOuter || part.kind === "inner" || part.kind === "limb";
   }
-  const standards = [rig.inner, rig.limb, rig.limbJoint, rig.outer, rig.outerLimb, rig.outerJoint];
+  const standards = [rig.inner, rig.limb, rig.outer, rig.outerLimb];
   for (const material of standards) {
     material.color.set(grade === "hologram" ? 0x9af6ff : grade === "ice" ? 0xd9f4ff : 0xffffff);
     material.emissive.set(grade === "hologram" ? 0x1c6cff : grade === "ice" ? 0x7ec8ea : 0x000000);
     material.emissiveIntensity = grade === "hologram" ? 0.85 : grade === "ice" ? 0.35 : 0;
     material.emissiveMap = grade === "hologram" || grade === "ice" ? material.map : null;
     material.roughness = grade === "ice" ? 0.18 : grade === "hologram" ? 0.28 : 0.94;
-    const shell = material === rig.outer || material === rig.outerLimb || material === rig.outerJoint;
+    const shell = material === rig.outer || material === rig.outerLimb;
     if (grade === "hologram") {
       material.transparent = true;
       material.opacity = 0.86;
@@ -34,7 +32,7 @@ export function applyLook(rig: Rig, grade: GradeId, outline: OutlineId, showOute
     } else {
       material.transparent = false;
       material.opacity = 1;
-      material.alphaTest = 0.15;
+      material.alphaTest = 0;
     }
     material.needsUpdate = true;
   }
