@@ -90,48 +90,91 @@ async function writeEdge(request: Request, response: Response) {
   }
 }
 
-async function resolvePlayer(name: string): Promise<Resolved> {
-  const profile = await fetch(`https://api.mojang.com/users/profiles/minecraft/${encodeURIComponent(name)}`, {
-    next: { revalidate: 1800 },
-  });
-  if (profile.status === 404) throw new Error("没有这个玩家。");
-  if (profile.status === 429) throw new Error("Mojang 限流了，等一会儿再查。");
-  if (!profile.ok) throw new Error("皮肤服务暂时没有回应。");
-  const identity = (await profile.json()) as { id?: string; name?: string };
-  if (!identity.id || !identity.name) throw new Error("没有这个玩家。");
+type TextureProperty = { name: string; value: string };
 
-  const session = await fetch(`https://sessionserver.mojang.com/session/minecraft/profile/${identity.id}`, {
-    next: { revalidate: 1800 },
-  });
-  if (session.status === 429) throw new Error("Mojang 限流了，等一会儿再查。");
-  if (!session.ok) throw new Error("皮肤服务暂时没有回应。");
-  const body = (await session.json()) as {
-    properties?: Array<{ name: string; value: string }>;
+type ProfileTextures = {
+  textures?: {
+    SKIN?: { url?: string; metadata?: { model?: string } };
+    CAPE?: { url?: string };
   };
-  const encoded = body.properties?.find((property) => property.name === "textures")?.value;
+};
+
+/** Workers' fetch cache. Node's fetch ignores this field. */
+type EdgeCachedInit = RequestInit & {
+  cf?: { cacheTtl: number; cacheEverything: true };
+};
+
+const UPSTREAM_TTL = 1800;
+
+function edgeCached(): EdgeCachedInit {
+  return { cf: { cacheTtl: UPSTREAM_TTL, cacheEverything: true } };
+}
+
+async function resolvePlayer(name: string): Promise<Resolved> {
+  const player = await lookupPlayer(name);
+  const encoded = player.properties.find((property) => property.name === "textures")?.value;
   if (!encoded) throw new Error("这个账号没有皮肤数据。");
-  const textures = JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as {
-    textures?: {
-      SKIN?: { url?: string; metadata?: { model?: string } };
-      CAPE?: { url?: string };
-    };
-  };
+  const textures = JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as ProfileTextures;
   const skinUrl = textures.textures?.SKIN?.url;
   if (!skinUrl) throw new Error("这个账号没有皮肤。");
   const skin = await readTexture(skinUrl);
   const capeUrl = textures.textures?.CAPE?.url;
   const cape = capeUrl ? await readTexture(capeUrl) : null;
   return {
-    name: identity.name,
-    id: identity.id,
+    name: player.name,
+    id: player.id,
     model: textures.textures?.SKIN?.metadata?.model === "slim" ? "slim" : "default",
     skin,
     cape,
   };
 }
 
+async function lookupPlayer(name: string): Promise<{ id: string; name: string; properties: TextureProperty[] }> {
+  const profile = await fetch(
+    `https://api.minecraftservices.com/minecraft/profile/lookup/name/${encodeURIComponent(name)}`,
+    edgeCached(),
+  );
+  if (profile.status === 404) throw new Error("没有这个玩家。");
+  if (profile.status === 429) throw new Error("Mojang 限流了，等一会儿再查。");
+  if (profile.ok) {
+    const identity = (await profile.json()) as { id?: string; name?: string };
+    const id = identity.id;
+    const foundName = identity.name;
+    if (!id || !foundName) throw new Error("没有这个玩家。");
+    const session = await fetch(`https://sessionserver.mojang.com/session/minecraft/profile/${id}`, edgeCached());
+    if (session.status === 429) throw new Error("Mojang 限流了，等一会儿再查。");
+    if (!session.ok) return lookupPlayerDb(name, { id, name: foundName });
+    const body = (await session.json()) as { properties?: TextureProperty[] };
+    return { id, name: foundName, properties: body.properties ?? [] };
+  }
+  // Workers are often answered with 403. playerdb still has the same texture blob.
+  return lookupPlayerDb(name);
+}
+
+async function lookupPlayerDb(name: string, known?: { id: string; name: string }) {
+  const alt = await fetch(`https://playerdb.co/api/player/minecraft/${encodeURIComponent(name)}`, {
+    ...edgeCached(),
+    headers: { "User-Agent": "pixelstage (tools.xm1221.cn)" },
+  });
+  if (alt.status === 404 || alt.status === 400) throw new Error("没有这个玩家。");
+  if (alt.status === 429) throw new Error("Mojang 限流了，等一会儿再查。");
+  if (!alt.ok) throw new Error("皮肤服务暂时没有回应。");
+  const data = (await alt.json()) as {
+    data?: { player?: { raw_id?: string; username?: string; properties?: TextureProperty[] } };
+  };
+  const player = data.data?.player;
+  const id = known?.id ?? player?.raw_id;
+  const foundName = known?.name ?? player?.username;
+  if (!id || !foundName) throw new Error("没有这个玩家。");
+  return { id, name: foundName, properties: player?.properties ?? [] };
+}
+
 async function readTexture(url: string) {
-  const response = await fetch(url, { next: { revalidate: 1800 } });
+  const parsed = new URL(url);
+  if (parsed.protocol !== "https:" || parsed.hostname !== "textures.minecraft.net") {
+    throw new Error("皮肤文件没有下下来。");
+  }
+  const response = await fetch(parsed.toString(), edgeCached());
   if (!response.ok) throw new Error("皮肤文件没有下下来。");
   const bytes = Buffer.from(await response.arrayBuffer());
   if (bytes.byteLength > 2_500_000) throw new Error("这张皮肤太大了，换一张 PNG 上传。");
