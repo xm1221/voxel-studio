@@ -1,4 +1,4 @@
-import type { CameraSnapshot, Joints, PlayerDraft, SceneDraft } from "./types";
+import type { CameraSnapshot, ClipId, Joints, PlayerDraft, SceneDraft } from "./types";
 
 export type SharePayload = {
   v: 1;
@@ -11,6 +11,8 @@ export type SharePayload = {
   keyIntensity: number;
   formatId: string;
   showOuter: boolean;
+  clip?: ClipId;
+  clipSpeed?: number;
   camera?: CameraSnapshot;
   players: Array<Omit<PlayerDraft, "skinUrl" | "capeUrl"> & { skinUrl?: string; capeUrl?: string | null }>;
 };
@@ -43,6 +45,8 @@ export function toPayload(scene: SceneDraft, camera: CameraSnapshot | undefined,
     keyIntensity: scene.keyIntensity,
     formatId: scene.formatId,
     showOuter: scene.showOuter,
+    clip: scene.clip,
+    clipSpeed: scene.clipSpeed,
     camera,
     players: scene.players.map((player) => ({
       id: player.id,
