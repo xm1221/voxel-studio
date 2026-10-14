@@ -1,4 +1,4 @@
-import type { CameraSnapshot, ClipId, Joints, LayerMode, PlayerDraft, SceneDraft } from "./types";
+import type { BackgroundFit, CameraSnapshot, ClipId, Joints, LayerMode, PlayerDraft, SceneDraft } from "./types";
 
 export function layerModeFrom(value: unknown): LayerMode {
   return value === "voxel" ? "voxel" : "flat";
@@ -18,6 +18,9 @@ export type SharePayload = {
   v: 1;
   activeId: string;
   background: SceneDraft["background"];
+  /** Present only in local saves. Share links leave this out. */
+  backgroundImage?: string;
+  backgroundFit?: BackgroundFit;
   grade: SceneDraft["grade"];
   outline: SceneDraft["outline"];
   godrays: boolean;
@@ -75,11 +78,27 @@ const JOINT_KEYS: (keyof Joints)[] = [
   "lKnee",
 ];
 
+const BACKGROUND_DATA_URL = /^data:image\/(png|jpeg|webp);base64,[a-z0-9+/]+=*$/i;
+
+/** Accept a PNG, JPEG, or WebP data URL. Anything else stays off the scene and out of links. */
+export function backgroundImageFrom(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > 6_000_000) return null;
+  return BACKGROUND_DATA_URL.test(value) ? value : null;
+}
+
+export function backgroundFitFrom(value: unknown): BackgroundFit {
+  return value === "contain" ? "contain" : "cover";
+}
+
 export function toPayload(scene: SceneDraft, camera: CameraSnapshot | undefined, keepUploads: boolean): SharePayload {
+  const backgroundImage = keepUploads ? backgroundImageFrom(scene.backgroundImage) : null;
   return {
     v: 1,
     activeId: scene.activeId,
     background: scene.background,
+    ...(backgroundImage
+      ? { backgroundImage, backgroundFit: backgroundFitFrom(scene.backgroundFit) }
+      : {}),
     grade: scene.grade,
     outline: scene.outline,
     godrays: scene.godrays,

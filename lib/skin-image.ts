@@ -56,13 +56,13 @@ function convertLegacy(context: CanvasRenderingContext2D, width: number) {
 export function loadSkinToCanvas(canvas: SkinCanvas, image: CanvasImageSource & { width: number; height: number }) {
   const legacy = image.width === image.height * 2;
   if (!legacy && image.width !== image.height) {
-    throw new Error("皮肤需要是 64×64，或旧版 64×32，高清皮肤同比例也行。");
+    throw new Error("err.skinSize");
   }
   const side = image.width;
   canvas.width = side;
   canvas.height = side;
   const context = canvas.getContext("2d", { willReadFrequently: true });
-  if (!context) throw new Error("画布不可用。");
+  if (!context) throw new Error("err.canvas");
   context.imageSmoothingEnabled = false;
   context.clearRect(0, 0, side, side);
   if (legacy) {
@@ -120,7 +120,7 @@ export function loadImage(url: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const image = new Image();
     image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error("皮肤图片没有读出来。"));
+    image.onerror = () => reject(new Error("err.skinImage"));
     image.src = url;
   });
 }

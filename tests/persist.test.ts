@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { clipExportSpanForPlayers } from "../lib/motion.ts";
 import { poseById } from "../lib/poses.ts";
 import {
+  backgroundImageFrom,
   decodePayload,
   encodePayload,
   layerModeFrom,
@@ -40,6 +41,8 @@ function scene(): SceneDraft {
     ],
     activeId: "p_test",
     background: "night",
+    backgroundImage: null,
+    backgroundFit: "cover",
     grade: "clean",
     outline: "none",
     godrays: false,
@@ -119,6 +122,29 @@ describe("pose url serialization", () => {
     assert.equal(restored.clipSpeed, 1.8);
     assert.equal(restored.showOuter, false);
     assert.equal(restored.layerMode, "voxel");
+  });
+
+  it("keeps a background image in local saves and drops it from share links", () => {
+    const draft = scene();
+    const image = "data:image/png;base64,aaaa";
+    draft.backgroundImage = image;
+    draft.backgroundFit = "contain";
+
+    const share = toPayload(draft, undefined, false);
+    assert.equal(share.backgroundImage, undefined);
+    assert.equal(share.backgroundFit, undefined);
+    assert.equal(backgroundImageFrom("https://example.com/bg.png"), null);
+    assert.equal(backgroundImageFrom("data:image/gif;base64,aaaa"), null);
+
+    const local = toPayload(draft, undefined, true);
+    assert.equal(local.backgroundImage, image);
+    assert.equal(local.backgroundFit, "contain");
+    const decoded = decodePayload(encodePayload(local));
+    assert.ok(decoded);
+    assert.equal(decoded.backgroundImage, image);
+    assert.equal(decoded.backgroundFit, "contain");
+    assert.equal(backgroundImageFrom(decoded.backgroundImage), image);
+    assert.equal(backgroundImageFrom("https://example.com/bg.jpg"), null);
   });
 
   it("uses the slowest player when calculating a shared GIF span", () => {

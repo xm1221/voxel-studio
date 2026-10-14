@@ -116,6 +116,37 @@ button {
   justify-content: flex-end;
 }
 
+.top-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.lang {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.lang button {
+  border: 0;
+  background: transparent;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.lang button.active {
+  background: var(--accent);
+  color: #ffffff;
+}
+
 .mobile-menu,
 .drawer-head,
 .mobile-tools,
@@ -147,6 +178,11 @@ button {
   color: #ffffff;
   border-color: transparent;
   font-weight: 650;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .btn.primary:disabled {
@@ -236,6 +272,32 @@ button {
   text-transform: uppercase;
   color: var(--muted);
   font-weight: 650;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.section-head h2 {
+  margin: 0;
+}
+
+.btn.reset {
+  border-color: rgba(47, 111, 237, 0.55);
+  color: var(--accent-2);
+  font-weight: 650;
+}
+
+.scene-hint {
+  margin: 0 0 10px;
+}
+
+.scene-chips {
+  gap: 8px;
 }
 
 .row {
@@ -369,7 +431,7 @@ button {
 
 .slider {
   display: grid;
-  grid-template-columns: 72px 1fr 42px;
+  grid-template-columns: 104px minmax(0, 1fr) 42px;
   gap: 8px;
   align-items: center;
 }
@@ -545,7 +607,7 @@ input[type="range"] {
   }
 
   .slider {
-    grid-template-columns: 58px minmax(0, 1fr) 42px;
+    grid-template-columns: 96px minmax(0, 1fr) 42px;
     gap: 10px;
     padding: 4px 0;
   }

@@ -1,7 +1,11 @@
+import { code } from "./i18n";
 import { withBasePath } from "./paths";
-import { poseById } from "./poses";
-import { playerSettingsFromPayload, type SharePayload } from "./persist";
+import { poseById, resetPlayer } from "./poses";
+import { backgroundFitFrom, backgroundImageFrom, playerSettingsFromPayload, type SharePayload } from "./persist";
+import { DEFAULT_SCENE_LOOK, resetSceneLook } from "./stage-look";
 import type { CameraSnapshot, PlayerDraft, SceneDraft } from "./types";
+
+export { resetPlayer, resetSceneLook };
 
 export const STORAGE_KEY = "pixelstage.v1";
 
@@ -35,12 +39,7 @@ export function defaultScene(steve: string): SceneDraft {
   return {
     players: [player],
     activeId: player.id,
-    background: "studio",
-    grade: "clean",
-    outline: "none",
-    godrays: false,
-    light: "soft",
-    keyIntensity: 1,
+    ...DEFAULT_SCENE_LOOK,
     formatId: "youtube",
   };
 }
@@ -96,6 +95,8 @@ export function sceneFromPayload(payload: SharePayload, steve: string, alex: str
       players,
       activeId,
       background: payload.background || "studio",
+      backgroundImage: backgroundImageFrom(payload.backgroundImage),
+      backgroundFit: backgroundFitFrom(payload.backgroundFit),
       grade: payload.grade || "clean",
       outline: payload.outline || "none",
       godrays: Boolean(payload.godrays),
@@ -109,6 +110,6 @@ export function sceneFromPayload(payload: SharePayload, steve: string, alex: str
 export async function requestPlayer(name: string) {
   const response = await fetch(withBasePath(`/api/player?name=${encodeURIComponent(name)}`));
   const data = (await response.json()) as { error?: string; name: string; model: "default" | "slim"; skin: string; cape: string | null };
-  if (!response.ok) throw new Error(data.error || "没有取到皮肤。");
+  if (!response.ok) throw new Error(data.error || code("err.noSkin"));
   return data;
 }
