@@ -146,7 +146,7 @@ function defaultScene(steve: string): SceneDraft {
     activeId: player.id,
     background: "studio",
     grade: "clean",
-    outline: "ink",
+      outline: "none",
     godrays: false,
     light: "soft",
     keyIntensity: 1,

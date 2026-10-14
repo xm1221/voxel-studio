@@ -269,7 +269,7 @@ function buildRig(model: ModelType, gradient: Texture): Rig {
       v: upperCap.v,
     });
     const elbow = new Group();
-    elbow.position.y = -4;
+    elbow.position.y = -3.65;
     assembly.add(elbow);
     addBox(elbow, rigBase, armW, 6, 4, { u, v, w: armW, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, limb, "limb", [0, -3, 0], {
       face: 2,
@@ -308,7 +308,7 @@ function buildRig(model: ModelType, gradient: Texture): Rig {
       v: upperCap.v,
     });
     const knee = new Group();
-    knee.position.y = -6;
+    knee.position.y = -5.65;
     hip.add(knee);
     addBox(knee, rigBase, 4, 6, 4, { u, v, w: 4, h: 6, d: 4, side: 6, texW: 64, texH: 64 }, limb, "limb", [0, -3, 0], {
       face: 2,
@@ -562,12 +562,14 @@ export class StudioEngine {
     this.renderer.domElement.style.width = "100%";
     this.renderer.domElement.style.height = "100%";
     this.renderer.domElement.style.display = "block";
+    this.renderer.domElement.style.position = "absolute";
+    this.renderer.domElement.style.inset = "0";
     this.renderer.domElement.style.touchAction = "none";
     this.renderer.domElement.setAttribute("aria-label", "皮肤预览");
     container.appendChild(this.renderer.domElement);
 
     this.camera = new PerspectiveCamera(32, 1, 0.1, 400);
-    this.camera.position.set(0, 6, 70);
+    this.camera.position.set(26, 10, 64);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.target.set(0, 2, 0);
     this.controls.enableDamping = true;
@@ -928,9 +930,9 @@ export class StudioEngine {
   }
 
   frameBody(count: number) {
-    const distance = Math.max(70, 48 + count * 18);
-    this.camera.position.set(0, 5, distance);
-    this.controls.target.set(0, 1, 0);
+    const distance = Math.max(64, 46 + count * 16);
+    this.camera.position.set(distance * 0.38, 9, distance);
+    this.controls.target.set(0, 2, 0);
     this.controls.update();
   }
 
