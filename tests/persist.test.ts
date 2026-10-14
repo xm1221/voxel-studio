@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { poseById } from "../lib/poses.ts";
-import { decodePayload, encodePayload, toPayload, type SharePayload } from "../lib/persist.ts";
+import { decodePayload, encodePayload, layerModeFrom, toPayload, type SharePayload } from "../lib/persist.ts";
 import type { Joints, SceneDraft } from "../lib/types.ts";
 
 const joints: Joints = poseById("sit").joints;
@@ -33,6 +33,7 @@ function scene(): SceneDraft {
     keyIntensity: 1,
     formatId: "youtube",
     showOuter: true,
+    layerMode: "flat",
     clip: "wave",
     clipSpeed: 1.45,
   };
@@ -45,6 +46,7 @@ describe("pose url serialization", () => {
     const encoded = encodePayload(toPayload(draft, camera, true));
     const decoded = decodePayload(encoded);
     assert.ok(decoded);
+    assert.equal(decoded.layerMode, "flat");
     assert.equal(decoded.clip, "wave");
     assert.equal(decoded.clipSpeed, 1.45);
     assert.equal(decoded.background, "night");
@@ -73,5 +75,18 @@ describe("pose url serialization", () => {
     broken.players[0].joints = joints as SharePayload["players"][number]["joints"];
     assert.equal(decodePayload(encodePayload(broken)), null);
     assert.equal(decodePayload("not-base64"), null);
+  });
+
+  it("keeps voxel layers in the link and treats an old link as flat", () => {
+    const draft = scene();
+    draft.layerMode = "voxel";
+    const decoded = decodePayload(encodePayload(toPayload(draft, undefined, false)));
+    assert.ok(decoded);
+    assert.equal(decoded.layerMode, "voxel");
+    const legacy = toPayload(scene(), undefined, false);
+    delete legacy.layerMode;
+    assert.equal(layerModeFrom(legacy.layerMode), "flat");
+    assert.equal(layerModeFrom("blocks"), "flat");
+    assert.equal(layerModeFrom("voxel"), "voxel");
   });
 });

@@ -1,4 +1,8 @@
-import type { CameraSnapshot, ClipId, Joints, PlayerDraft, SceneDraft } from "./types";
+import type { CameraSnapshot, ClipId, Joints, LayerMode, PlayerDraft, SceneDraft } from "./types";
+
+export function layerModeFrom(value: unknown): LayerMode {
+  return value === "voxel" ? "voxel" : "flat";
+}
 
 export type SharePayload = {
   v: 1;
@@ -11,6 +15,7 @@ export type SharePayload = {
   keyIntensity: number;
   formatId: string;
   showOuter: boolean;
+  layerMode?: SceneDraft["layerMode"];
   clip?: ClipId;
   clipSpeed?: number;
   camera?: CameraSnapshot;
@@ -45,6 +50,7 @@ export function toPayload(scene: SceneDraft, camera: CameraSnapshot | undefined,
     keyIntensity: scene.keyIntensity,
     formatId: scene.formatId,
     showOuter: scene.showOuter,
+    layerMode: scene.layerMode,
     clip: scene.clip,
     clipSpeed: scene.clipSpeed,
     camera,

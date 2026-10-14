@@ -38,6 +38,7 @@ export type GradeId = "clean" | "hologram" | "ice" | "comic";
 export type OutlineId = "none" | "ink" | "sticker";
 export type LightId = "soft" | "hard" | "neon" | "moon";
 export type ClipId = "none" | "idle" | "walk" | "run" | "wave" | "cheer";
+export type LayerMode = "flat" | "voxel";
 
 export type SceneDraft = {
   players: PlayerDraft[];
@@ -50,6 +51,7 @@ export type SceneDraft = {
   keyIntensity: number;
   formatId: string;
   showOuter: boolean;
+  layerMode: LayerMode;
   clip: ClipId;
   clipSpeed: number;
 };

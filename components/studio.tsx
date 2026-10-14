@@ -7,6 +7,7 @@ import { FORMATS, formatById, gifFrameSize } from "@/lib/formats";
 import { CLIPS, clipExportSpan } from "@/lib/motion";
 import { decodePayload, encodePayload, toPayload } from "@/lib/persist";
 import { POSES } from "@/lib/poses";
+import { PRESET_STORAGE_KEY, mergePresets, newPresetId, parsePresetDocument, presetDocument, type UserPreset } from "@/lib/presets";
 import { inferModelType, loadImage, loadSkinToCanvas } from "@/lib/skin-image";
 import { STORAGE_KEY, defaultScene, makePlayer, requestPlayer, sceneFromPayload } from "@/lib/studio-state";
 import type { CameraSnapshot, Joints, PlayerDraft, SceneDraft } from "@/lib/types";
@@ -72,12 +73,29 @@ export function Studio() {
   const engineRef = useRef<StudioEngine | null>(null);
   const sceneRef = useRef<SceneDraft | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const presetFileRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [dropping, setDropping] = useState(false);
   const [fatal, setFatal] = useState<string | null>(null);
+  const [presets, setPresets] = useState<UserPreset[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = localStorage.getItem(PRESET_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = parsePresetDocument(JSON.parse(raw) as unknown);
+      return parsed.ok ? parsed.presets : [];
+    } catch {
+      return [];
+    }
+  });
+  const [presetName, setPresetName] = useState("");
+  const [keepLook, setKeepLook] = useState(false);
+  const [presetJson, setPresetJson] = useState("");
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   const [scene, setScene] = useState<SceneDraft | null>(() => {
     const skins = ensureSkins();
@@ -179,8 +197,84 @@ export function Studio() {
 
   const poseName = useMemo(() => {
     if (!active) return "";
-    return POSES.find((pose) => pose.id === active.poseId)?.name ?? "自定义";
-  }, [active]);
+    return POSES.find((pose) => pose.id === active.poseId)?.name ?? presets.find((preset) => `user:${preset.id}` === active.poseId)?.name ?? "自定义";
+  }, [active, presets]);
+
+  function writePresets(next: UserPreset[]) {
+    setPresets(next);
+    try {
+      localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify(presetDocument(next)));
+    } catch {
+      setError("浏览器没有把姿势存下来。");
+    }
+  }
+
+  function applyUserPreset(preset: UserPreset) {
+    patch((current) => ({
+      ...current,
+      light: preset.look?.light ?? current.light,
+      keyIntensity: preset.look?.keyIntensity ?? current.keyIntensity,
+      players: current.players.map((player) => (player.id === current.activeId ? { ...player, poseId: `user:${preset.id}`, joints: { ...preset.joints } } : player)),
+    }));
+    if (preset.camera) engineRef.current?.setCamera(preset.camera);
+  }
+
+  function saveUserPreset() {
+    if (!active || !scene) return;
+    const name = presetName.trim();
+    if (!name || name.length > 24) {
+      setError("姿势名字要在 1–24 个字。");
+      return;
+    }
+    if (presets.length >= 40) {
+      setError("最多保存 40 个姿势。");
+      return;
+    }
+    const preset: UserPreset = {
+      id: newPresetId(presets),
+      name,
+      joints: { ...active.joints },
+      look: keepLook ? { light: scene.light, keyIntensity: scene.keyIntensity } : undefined,
+      camera: keepLook ? engineRef.current?.getCamera() : undefined,
+    };
+    writePresets([...presets, preset]);
+    setPresetName("");
+    setMessage(`已保存「${name}」。`);
+    updateActive({ poseId: `user:${preset.id}` });
+  }
+
+  function commitRename(id: string) {
+    const name = renameValue.trim();
+    if (!name || name.length > 24) {
+      setError("姿势名字要在 1–24 个字。");
+      return;
+    }
+    writePresets(presets.map((preset) => (preset.id === id ? { ...preset, name } : preset)));
+    setRenamingId(null);
+  }
+
+  function importPresetText(text: string) {
+    let value: unknown;
+    try {
+      value = JSON.parse(text) as unknown;
+    } catch {
+      setError("这不是姿势 JSON。");
+      return;
+    }
+    const parsed = parsePresetDocument(value);
+    if (!parsed.ok) {
+      setError(parsed.error);
+      return;
+    }
+    const merged = mergePresets(presets, parsed.presets);
+    if (!merged.ok) {
+      setError(merged.error);
+      return;
+    }
+    writePresets(merged.presets);
+    setPresetJson("");
+    setMessage(`导入了 ${parsed.presets.length} 个姿势。`);
+  }
 
   function patch(next: (current: SceneDraft) => SceneDraft) {
     setScene((current) => (current ? next(current) : current));
@@ -501,7 +595,97 @@ export function Studio() {
                     </button>
                   ))}
                 </div>
-                <p className="hint">{POSES.find((pose) => pose.id === active.poseId)?.hint ?? "滑块已经离开预设，肘和膝还按你拉的角度弯。"}</p>
+                <p className="hint">
+                  {POSES.find((pose) => pose.id === active.poseId)?.hint ??
+                    (presets.some((preset) => `user:${preset.id}` === active.poseId) ? "这是你存的姿势。" : "滑块已经离开预设，肘和膝还按你拉的角度弯。")}
+                </p>
+                <div className="preset-tools">
+                  <label className="field">
+                    <span>存成我的姿势</span>
+                    <input value={presetName} maxLength={24} placeholder="姿势名字" aria-label="姿势名字" onChange={(event) => setPresetName(event.target.value)} />
+                  </label>
+                  <label className="check">
+                    <input type="checkbox" checked={keepLook} onChange={(event) => setKeepLook(event.target.checked)} />
+                    连灯光和机位
+                  </label>
+                  <div className="row">
+                    <button className="btn" type="button" onClick={saveUserPreset}>
+                      保存姿势
+                    </button>
+                    <button className="btn ghost" type="button" disabled={!presets.length} onClick={() => downloadPresets(presets)}>
+                      导出 JSON
+                    </button>
+                    <button className="btn ghost" type="button" onClick={() => presetFileRef.current?.click()}>
+                      导入文件
+                    </button>
+                  </div>
+                  {presets.length ? (
+                    <div className="preset-list">
+                      {presets.map((preset) => (
+                        <div className="preset-row" key={preset.id}>
+                          {renamingId === preset.id ? (
+                            <input
+                              value={renameValue}
+                              maxLength={24}
+                              aria-label="新的姿势名字"
+                              onChange={(event) => setRenameValue(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") commitRename(preset.id);
+                              }}
+                            />
+                          ) : (
+                            <button type="button" className={active.poseId === `user:${preset.id}` ? "pose active" : "pose"} onClick={() => applyUserPreset(preset)}>
+                              {preset.name}
+                            </button>
+                          )}
+                          {renamingId === preset.id ? (
+                            <button className="btn" type="button" onClick={() => commitRename(preset.id)}>
+                              完成
+                            </button>
+                          ) : (
+                            <button
+                              className="btn ghost"
+                              type="button"
+                              onClick={() => {
+                                setRenamingId(preset.id);
+                                setRenameValue(preset.name);
+                              }}
+                            >
+                              改名
+                            </button>
+                          )}
+                          <button className="btn ghost" type="button" onClick={() => writePresets(presets.filter((item) => item.id !== preset.id))}>
+                            删除
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="hint">保存在这台浏览器里。导出的 JSON 可以再贴回来。</p>
+                  )}
+                  <label className="field">
+                    <span>粘贴 JSON</span>
+                    <textarea className="preset-json" value={presetJson} aria-label="姿势 JSON" placeholder='{"v":1,"presets":[]}' onChange={(event) => setPresetJson(event.target.value)} />
+                  </label>
+                  <div className="row">
+                    <button className="btn" type="button" disabled={!presetJson.trim()} onClick={() => importPresetText(presetJson)}>
+                      粘贴导入
+                    </button>
+                  </div>
+                  <input
+                    ref={presetFileRef}
+                    type="file"
+                    accept="application/json,.json"
+                    hidden
+                    aria-label="导入姿势文件"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      event.target.value = "";
+                      if (!file) return;
+                      void file.text().then((text) => importPresetText(text)).catch(() => setError("姿势文件没有读出来。"));
+                    }}
+                  />
+                </div>
               </section>
 
               <section className="block">
@@ -620,7 +804,21 @@ export function Studio() {
                   <button type="button" className={scene.showOuter ? "chip active" : "chip"} onClick={() => patch((current) => ({ ...current, showOuter: !current.showOuter }))}>
                     第二层
                   </button>
+                  <button
+                    type="button"
+                    className={scene.layerMode === "voxel" ? "chip active" : "chip"}
+                    onClick={() =>
+                      patch((current) => ({
+                        ...current,
+                        layerMode: current.layerMode === "voxel" ? "flat" : "voxel",
+                        showOuter: current.layerMode === "voxel" ? current.showOuter : true,
+                      }))
+                    }
+                  >
+                    3D 外层
+                  </button>
                 </div>
+                <p className="hint">3D 外层把帽子、外套、袖子和裤子的第二层皮肤挤成一格一格的方块，透明的像素会空出来。</p>
               </section>
 
               <section className="block">
@@ -654,6 +852,16 @@ export function Studio() {
       </div>
     </div>
   );
+}
+
+function downloadPresets(presets: UserPreset[]) {
+  const blob = new Blob([JSON.stringify(presetDocument(presets), null, 2)], { type: "application/json" });
+  const link = document.createElement("a");
+  const url = URL.createObjectURL(blob);
+  link.href = url;
+  link.download = "pixelstage-presets.json";
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function fileToDataUrl(file: File) {
