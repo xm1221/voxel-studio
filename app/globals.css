@@ -116,6 +116,37 @@ button {
   justify-content: flex-end;
 }
 
+.top-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.lang {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.lang button {
+  border: 0;
+  background: transparent;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.lang button.active {
+  background: var(--accent);
+  color: #ffffff;
+}
+
 .mobile-menu,
 .drawer-head,
 .mobile-tools,
@@ -400,7 +431,7 @@ button {
 
 .slider {
   display: grid;
-  grid-template-columns: 72px 1fr 42px;
+  grid-template-columns: 104px minmax(0, 1fr) 42px;
   gap: 8px;
   align-items: center;
 }
@@ -576,7 +607,7 @@ input[type="range"] {
   }
 
   .slider {
-    grid-template-columns: 58px minmax(0, 1fr) 42px;
+    grid-template-columns: 96px minmax(0, 1fr) 42px;
     gap: 10px;
     padding: 4px 0;
   }

@@ -5,9 +5,9 @@ export type GifFrame = {
 
 /** 把一串 RGBA 帧编成循环 GIF。索引 0 留给透明像素。 */
 export function encodeGif(frames: GifFrame[], width: number, height: number): Uint8Array {
-  if (!frames.length) throw new Error("没有可以导出的帧。");
+  if (!frames.length) throw new Error("err.noFrames");
   const expected = width * height * 4;
-  if (frames.some((frame) => frame.rgba.length !== expected)) throw new Error("帧尺寸和画布对不上。");
+  if (frames.some((frame) => frame.rgba.length !== expected)) throw new Error("err.frameSize");
 
   const samples: number[] = [];
   let transparent = false;

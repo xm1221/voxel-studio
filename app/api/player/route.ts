@@ -1,4 +1,5 @@
 import { connection } from "next/server";
+import { code } from "@/lib/i18n";
 
 type ModelType = "default" | "slim";
 
@@ -26,7 +27,7 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const name = url.searchParams.get("name")?.trim() ?? "";
   if (!/^[a-zA-Z0-9_]{1,16}$/.test(name)) {
-    return Response.json({ error: "玩家名是 1–16 位字母、数字或下划线。" }, { status: 400, headers: { "Cache-Control": "no-store" } });
+    return Response.json({ error: code("err.badName") }, { status: 400, headers: { "Cache-Control": "no-store" } });
   }
 
   const key = name.toLowerCase();
@@ -44,8 +45,8 @@ export async function GET(request: Request) {
     await writeEdge(cacheKey, response);
     return response;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "皮肤服务暂时没有回应。";
-    const status = message.includes("没有这个玩家") ? 404 : message.includes("限流") ? 429 : 502;
+    const message = error instanceof Error ? error.message : code("err.upstream");
+    const status = message === "err.noPlayer" ? 404 : message === "err.rateLimit" ? 429 : 502;
     if (status === 404) memory.set(key, { at: Date.now(), ok: false, status, error: message });
     const cache = status === 404 ? MISS_CACHE : "no-store";
     return Response.json({ error: message }, { status, headers: { "Cache-Control": cache } });
@@ -113,10 +114,10 @@ function edgeCached(): EdgeCachedInit {
 async function resolvePlayer(name: string): Promise<Resolved> {
   const player = await lookupPlayer(name);
   const encoded = player.properties.find((property) => property.name === "textures")?.value;
-  if (!encoded) throw new Error("这个账号没有皮肤数据。");
+  if (!encoded) throw new Error(code("err.noSkinData"));
   const textures = JSON.parse(Buffer.from(encoded, "base64").toString("utf8")) as ProfileTextures;
   const skinUrl = textures.textures?.SKIN?.url;
-  if (!skinUrl) throw new Error("这个账号没有皮肤。");
+  if (!skinUrl) throw new Error(code("err.noAccountSkin"));
   const skin = await readTexture(skinUrl);
   const capeUrl = textures.textures?.CAPE?.url;
   const cape = capeUrl ? await readTexture(capeUrl) : null;
@@ -134,15 +135,15 @@ async function lookupPlayer(name: string): Promise<{ id: string; name: string; p
     `https://api.minecraftservices.com/minecraft/profile/lookup/name/${encodeURIComponent(name)}`,
     edgeCached(),
   );
-  if (profile.status === 404) throw new Error("没有这个玩家。");
-  if (profile.status === 429) throw new Error("Mojang 限流了，等一会儿再查。");
+  if (profile.status === 404) throw new Error(code("err.noPlayer"));
+  if (profile.status === 429) throw new Error(code("err.rateLimit"));
   if (profile.ok) {
     const identity = (await profile.json()) as { id?: string; name?: string };
     const id = identity.id;
     const foundName = identity.name;
-    if (!id || !foundName) throw new Error("没有这个玩家。");
+    if (!id || !foundName) throw new Error(code("err.noPlayer"));
     const session = await fetch(`https://sessionserver.mojang.com/session/minecraft/profile/${id}`, edgeCached());
-    if (session.status === 429) throw new Error("Mojang 限流了，等一会儿再查。");
+    if (session.status === 429) throw new Error(code("err.rateLimit"));
     if (!session.ok) return lookupPlayerDb(name, { id, name: foundName });
     const body = (await session.json()) as { properties?: TextureProperty[] };
     return { id, name: foundName, properties: body.properties ?? [] };
@@ -156,16 +157,16 @@ async function lookupPlayerDb(name: string, known?: { id: string; name: string }
     ...edgeCached(),
     headers: { "User-Agent": "pixelstage (tools.xm1221.cn)" },
   });
-  if (alt.status === 404 || alt.status === 400) throw new Error("没有这个玩家。");
-  if (alt.status === 429) throw new Error("Mojang 限流了，等一会儿再查。");
-  if (!alt.ok) throw new Error("皮肤服务暂时没有回应。");
+  if (alt.status === 404 || alt.status === 400) throw new Error(code("err.noPlayer"));
+  if (alt.status === 429) throw new Error(code("err.rateLimit"));
+  if (!alt.ok) throw new Error(code("err.upstream"));
   const data = (await alt.json()) as {
     data?: { player?: { raw_id?: string; username?: string; properties?: TextureProperty[] } };
   };
   const player = data.data?.player;
   const id = known?.id ?? player?.raw_id;
   const foundName = known?.name ?? player?.username;
-  if (!id || !foundName) throw new Error("没有这个玩家。");
+  if (!id || !foundName) throw new Error(code("err.noPlayer"));
   return { id, name: foundName, properties: player?.properties ?? [] };
 }
 
@@ -173,11 +174,11 @@ async function readTexture(url: string) {
   const parsed = new URL(url);
   if (parsed.protocol === "http:") parsed.protocol = "https:";
   if (parsed.protocol !== "https:" || parsed.hostname !== "textures.minecraft.net") {
-    throw new Error("皮肤文件没有下下来。");
+    throw new Error(code("err.texture"));
   }
   const response = await fetch(parsed.toString(), edgeCached());
-  if (!response.ok) throw new Error("皮肤文件没有下下来。");
+  if (!response.ok) throw new Error(code("err.texture"));
   const bytes = Buffer.from(await response.arrayBuffer());
-  if (bytes.byteLength > 2_500_000) throw new Error("这张皮肤太大了，换一张 PNG 上传。");
+  if (bytes.byteLength > 2_500_000) throw new Error(code("err.skinTooBig"));
   return `data:image/png;base64,${bytes.toString("base64")}`;
 }

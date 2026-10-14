@@ -73,7 +73,7 @@ export class StudioEngine {
     canvas.style.position = "absolute";
     canvas.style.inset = "0";
     canvas.style.touchAction = "none";
-    canvas.setAttribute("aria-label", "皮肤预览");
+    canvas.setAttribute("aria-label", "Pixelstage");
     container.appendChild(canvas);
     canvas.addEventListener("pointerdown", this.onPointerDown);
     canvas.addEventListener("pointermove", this.onPointerMove);

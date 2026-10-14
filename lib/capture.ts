@@ -1,4 +1,5 @@
 import { Color, type Group, type Mesh, type PerspectiveCamera, type Scene, type WebGLRenderer, ShadowMaterial } from "three";
+import { code } from "./i18n";
 import { encodeGif, type GifFrame } from "./gif";
 import type { SceneDraft } from "./types";
 import type { StageSet } from "./stage";
@@ -39,7 +40,7 @@ export async function captureStill(
   output.width = options.width;
   output.height = options.height;
   const context = output.getContext("2d");
-  if (!context) throw new Error("导出画布不可用。");
+  if (!context) throw new Error(code("err.exportCanvas"));
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = "high";
   if (options.round) {
@@ -51,7 +52,7 @@ export async function captureStill(
   restoreWorld(host, saved, ratio, viewW, viewH);
 
   const blob = await new Promise<Blob | null>((resolve) => output.toBlob(resolve, "image/png"));
-  if (!blob) throw new Error("没有生成 PNG。");
+  if (!blob) throw new Error(code("err.noPng"));
   return blob;
 }
 
@@ -60,7 +61,7 @@ export async function captureClip(
   options: { width: number; height: number; round: boolean; transparent: boolean; frames: number; seconds: number },
 ) {
   const draft = host.draft;
-  if (!draft) throw new Error("场景还没准备好。");
+  if (!draft) throw new Error(code("err.sceneNotReady"));
   const parent = host.renderer.domElement.parentElement;
   const viewW = parent?.clientWidth ?? host.renderer.domElement.width;
   const viewH = parent?.clientHeight ?? host.renderer.domElement.height;
@@ -74,7 +75,7 @@ export async function captureClip(
   output.width = options.width;
   output.height = options.height;
   const context = output.getContext("2d", { willReadFrequently: true });
-  if (!context) throw new Error("导出画布不可用。");
+  if (!context) throw new Error(code("err.exportCanvas"));
   host.setHeld(true);
 
   try {

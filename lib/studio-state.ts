@@ -1,3 +1,4 @@
+import { code } from "./i18n";
 import { withBasePath } from "./paths";
 import { poseById, resetPlayer } from "./poses";
 import { backgroundFitFrom, backgroundImageFrom, playerSettingsFromPayload, type SharePayload } from "./persist";
@@ -109,6 +110,6 @@ export function sceneFromPayload(payload: SharePayload, steve: string, alex: str
 export async function requestPlayer(name: string) {
   const response = await fetch(withBasePath(`/api/player?name=${encodeURIComponent(name)}`));
   const data = (await response.json()) as { error?: string; name: string; model: "default" | "slim"; skin: string; cape: string | null };
-  if (!response.ok) throw new Error(data.error || "没有取到皮肤。");
+  if (!response.ok) throw new Error(data.error || code("err.noSkin"));
   return data;
 }

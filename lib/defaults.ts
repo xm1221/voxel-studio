@@ -1,3 +1,5 @@
+import { code } from "./i18n";
+
 type FaceColors = {
   top: string;
   bottom: string;
@@ -50,7 +52,7 @@ export function createSteveSkin() {
   canvas.width = 64;
   canvas.height = 64;
   const context = canvas.getContext("2d");
-  if (!context) throw new Error("画布不可用。");
+  if (!context) throw new Error(code("err.canvas"));
   const hair = "#3a2618";
   const skin = "#c48b62";
   const skinDeep = "#a56d49";
@@ -138,7 +140,7 @@ export function createAlexSkin() {
   canvas.width = 64;
   canvas.height = 64;
   const context = canvas.getContext("2d");
-  if (!context) throw new Error("画布不可用。");
+  if (!context) throw new Error(code("err.canvas"));
   const hair = "#e08a3c";
   const skin = "#e2b48a";
   const skinDeep = "#c48b62";

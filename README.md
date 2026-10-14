@@ -15,6 +15,7 @@ A Minecraft skin stage in the browser. Look up a player or drop in a skin, pose 
 - 分享链接带上姿势、动作、灯光和机位。上传的皮肤和背景图只留在这台浏览器里。
 - 正版披风会跟着账号下来，可以关掉。
 - 关节含肘和膝，外层可以是平面或 3D。名牌和气泡，柔光 / 硬光 / 霓虹 / 月光。
+- 界面可以切中文或英文。右上角的「中 / EN」会记在这台浏览器里；没选过时，语言以 `zh` 开头用中文，否则用英文。
 
 - Up to 4 players. Each one has their own pose, clip, speed, position, and scale.
 - On a phone the controls sit in a drawer; on a desktop they stay in the side panel.
@@ -23,6 +24,7 @@ A Minecraft skin stage in the browser. Look up a player or drop in a skin, pose 
 - Share links carry the pose, motion, lights, and camera. Uploaded skins and background images stay in this browser.
 - Capes from the account can be turned off.
 - Elbows and knees, a flat or voxel outer layer, nametags and speech bubbles, and soft / hard / neon / moon light.
+- The interface is Chinese or English. The 中 / EN control in the top bar is saved in this browser. With nothing saved, a `zh` locale stays in Chinese and every other language starts in English.
 
 ## 怎么用 / How to use
 

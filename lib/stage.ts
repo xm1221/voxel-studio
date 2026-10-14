@@ -19,6 +19,7 @@ import {
   WebGLRenderer,
   type Texture,
 } from "three";
+import { code } from "./i18n";
 import type { SceneDraft } from "./types";
 import { FOOT_Y } from "./rig/layout";
 import { BACKGROUNDS, backgroundDrawRect, stageLook } from "./stage-look";
@@ -43,7 +44,7 @@ function pixelTexture(paint: (context: CanvasRenderingContext2D) => void) {
   canvas.width = 16;
   canvas.height = 16;
   const context = canvas.getContext("2d");
-  if (!context) throw new Error("画布不可用。");
+  if (!context) throw new Error(code("err.canvas"));
   paint(context);
   const texture = new CanvasTexture(canvas);
   texture.magFilter = NearestFilter;

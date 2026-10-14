@@ -1,5 +1,9 @@
 import type { CameraSnapshot, Joints, LightId } from "./types";
 
+function presetError(key: string, vars?: Record<string, string | number>) {
+  return vars ? `${key}|${JSON.stringify(vars)}` : key;
+}
+
 export const PRESET_STORAGE_KEY = "pixelstage.presets.v1";
 
 export const JOINT_LIMITS: Record<keyof Joints, { min: number; max: number }> = {
@@ -53,7 +57,7 @@ export function newPresetId(existing: { id: string }[]) {
 }
 
 export function mergePresets(current: UserPreset[], incoming: UserPreset[]): { ok: true; presets: UserPreset[] } | { ok: false; error: string } {
-  if (current.length + incoming.length > 40) return { ok: false, error: "加上现有的会超过 40 个姿势。" };
+  if (current.length + incoming.length > 40) return { ok: false, error: presetError("err.presetMerge") };
   const taken = new Set(current.map((preset) => preset.id));
   const presets = [...current];
   for (const preset of incoming) {
@@ -68,7 +72,7 @@ export function mergePresets(current: UserPreset[], incoming: UserPreset[]): { o
 export function parsePresetDocument(value: unknown): { ok: true; presets: UserPreset[] } | { ok: false; error: string } {
   const body = unwrap(value);
   if (!body.ok) return body;
-  if (body.presets.length > 40) return { ok: false, error: "一次最多导入 40 个姿势。" };
+  if (body.presets.length > 40) return { ok: false, error: presetError("err.presetCap") };
   const presets: UserPreset[] = [];
   const seen = new Set<string>();
   for (let index = 0; index < body.presets.length; index += 1) {
@@ -79,31 +83,31 @@ export function parsePresetDocument(value: unknown): { ok: true; presets: UserPr
     seen.add(id);
     presets.push({ ...parsed.preset, id });
   }
-  if (!presets.length) return { ok: false, error: "文件里没有姿势。" };
+  if (!presets.length) return { ok: false, error: presetError("err.presetEmpty") };
   return { ok: true, presets };
 }
 
 function unwrap(value: unknown): { ok: true; presets: unknown[] } | { ok: false; error: string } {
   if (Array.isArray(value)) return { ok: true, presets: value };
-  if (!value || typeof value !== "object") return { ok: false, error: "这不是姿势 JSON。" };
+  if (!value || typeof value !== "object") return { ok: false, error: presetError("err.presetJson") };
   const record = value as { v?: unknown; presets?: unknown; joints?: unknown };
   if (record.joints && !record.presets) return { ok: true, presets: [value] };
-  if (record.v !== 1) return { ok: false, error: "姿势文件版本不对。" };
-  if (!Array.isArray(record.presets)) return { ok: false, error: "姿势文件里没有列表。" };
+  if (record.v !== 1) return { ok: false, error: presetError("err.presetVersion") };
+  if (!Array.isArray(record.presets)) return { ok: false, error: presetError("err.presetList") };
   return { ok: true, presets: record.presets };
 }
 
 function parsePreset(value: unknown, index: number): { ok: true; preset: UserPreset } | { ok: false; error: string } {
-  if (!value || typeof value !== "object") return { ok: false, error: `第 ${index + 1} 个姿势不是对象。` };
+  if (!value || typeof value !== "object") return { ok: false, error: presetError("err.presetObject", { n: index + 1 }) };
   const record = value as { id?: unknown; name?: unknown; joints?: unknown; look?: unknown; camera?: unknown };
   const name = typeof record.name === "string" ? record.name.trim() : "";
-  if (!name || name.length > 24) return { ok: false, error: `第 ${index + 1} 个姿势需要 1–24 字的名字。` };
+  if (!name || name.length > 24) return { ok: false, error: presetError("err.presetName", { n: index + 1 }) };
   const joints = parseJoints(record.joints);
-  if (!joints) return { ok: false, error: `「${name}」的关节角度不完整，或超出了滑块范围。` };
+  if (!joints) return { ok: false, error: presetError("err.presetJoints", { name }) };
   const look = parseLook(record.look);
-  if (look === "bad") return { ok: false, error: `「${name}」的灯光数据不对。` };
+  if (look === "bad") return { ok: false, error: presetError("err.presetLight", { name }) };
   const camera = parseCamera(record.camera);
-  if (camera === "bad") return { ok: false, error: `「${name}」的机位数据不对。` };
+  if (camera === "bad") return { ok: false, error: presetError("err.presetCamera", { name }) };
   const id = typeof record.id === "string" && /^[a-zA-Z0-9_-]{1,32}$/.test(record.id) ? record.id : `u_${index}`;
   return { ok: true, preset: { id, name, joints, look, camera } };
 }
