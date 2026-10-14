@@ -110,20 +110,20 @@ export function sampleClip(clip: ClipId, time: number, rest: Joints): ClipSample
     cape = 10 + Math.sin(t * 2) * 6;
   } else if (clip === "wave") {
     const t = time * Math.PI;
-    joints.rArmX = -18;
-    joints.rArmZ = -146 + Math.sin(t) * 8;
-    joints.rElbow = -58 + Math.sin(t) * 24;
-    joints.headY = -12 + Math.sin(t) * 4;
-    joints.headX = rest.headX * 0.25 - 4;
+    joints.rArmX = -18 + Math.sin(t) * 4;
+    joints.rArmZ = -108 + Math.sin(t) * 8;
+    joints.rElbow = -48 + Math.sin(t) * 16;
+    joints.headY = -16 + Math.sin(t) * 5;
+    joints.headX = -4;
     cape = Math.sin(t) * 2;
   } else if (clip === "cheer") {
     const t = (time * Math.PI * 2) / 1.2;
-    joints.rArmX = -28 + Math.sin(t) * 12;
-    joints.lArmX = -28 + Math.sin(t + 0.7) * 12;
-    joints.rArmZ = -152;
-    joints.lArmZ = 152;
-    joints.rElbow = -48 + Math.sin(t) * 18;
-    joints.lElbow = -48 + Math.sin(t + 0.7) * 18;
+    joints.rArmX = -24 + Math.sin(t) * 8;
+    joints.lArmX = -24 + Math.sin(t + 0.7) * 8;
+    joints.rArmZ = -112;
+    joints.lArmZ = 112;
+    joints.rElbow = -70 + Math.sin(t) * 14;
+    joints.lElbow = -70 + Math.sin(t + 0.7) * 14;
     joints.headX = -8 + Math.sin(t) * 3;
     joints.rKnee = rest.rKnee + Math.max(0, Math.sin(t)) * 10;
     joints.lKnee = rest.lKnee + Math.max(0, Math.sin(t + Math.PI)) * 10;

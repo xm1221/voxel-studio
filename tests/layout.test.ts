@@ -4,7 +4,7 @@ import { poseById } from "../lib/poses.ts";
 import { FOOT_Y, OVERLAP, planLimbs, plantedFootY, rotateX, seatShift, sitAmount } from "../lib/rig/layout.ts";
 
 describe("limb layout", () => {
-  it("keeps a wide arm 12 pixels long and hinged on the back of the elbow", () => {
+  it("keeps a wide arm 12 pixels long and coaxial through the elbow", () => {
     const arm = planLimbs("default").find((plan) => plan.id === "rightArm");
     assert.ok(arm);
     assert.deepEqual(arm.pivot, [-4, 0, 0]);
@@ -12,9 +12,12 @@ describe("limb layout", () => {
     assert.equal(arm.upper.size[0], 4);
     const top = arm.upper.center[1] + arm.upper.size[1] / 2;
     assert.ok(Math.abs(top) < 1e-6);
-    assert.deepEqual(arm.joint, [-2, -6, -2]);
-    const back = arm.lower.center[2] - arm.lower.size[2] / 2;
-    assert.ok(Math.abs(back) < 1e-6, "lower arm back face sits on the hinge");
+    assert.deepEqual(arm.joint, [-2, -6, 0]);
+    assert.equal(arm.lower.center[0], 0);
+    assert.equal(arm.lower.center[2], 0);
+    const upperX = arm.upper.center[0] - arm.upper.size[0] / 2;
+    const lowerX = arm.joint[0] + arm.lower.center[0] - arm.lower.size[0] / 2;
+    assert.equal(upperX, lowerX);
     const overlap = arm.lower.center[1] + arm.lower.size[1] / 2;
     assert.ok(Math.abs(overlap - OVERLAP) < 1e-6);
     const sole = arm.joint[1] + arm.lower.center[1] - arm.lower.size[1] / 2;
@@ -34,13 +37,13 @@ describe("limb layout", () => {
     assert.equal(left?.overlay.u, 48);
   });
 
-  it("hinges the knee on the front of the leg", () => {
+  it("hinges the knee at the center of the leg", () => {
     const leg = planLimbs("default").find((plan) => plan.id === "rightLeg");
     assert.ok(leg);
     assert.equal(leg.hingeSign, 1);
-    assert.equal(leg.joint[2], 2);
-    const front = leg.lower.center[2] + leg.lower.size[2] / 2;
-    assert.ok(Math.abs(front) < 1e-6);
+    assert.equal(leg.joint[2], 0);
+    assert.equal(leg.lower.center[0], 0);
+    assert.equal(leg.lower.center[2], 0);
     assert.equal(leg.pivot[1], -12);
   });
 });

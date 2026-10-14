@@ -9,9 +9,6 @@ export const SEGMENT = 6;
 export const OVERLAP = 0.32;
 /** Jacket dilation, matching the vanilla second layer (0.25 per side). */
 export const SHELL = 0.25;
-/** How far the jacket crosses the hinge face so the inner edge does not peek. */
-export const HINGE_COVER = 0.06;
-
 const DEG = Math.PI / 180;
 
 export type Vec3 = [number, number, number];
@@ -26,26 +23,20 @@ export type LimbId = "rightArm" | "leftArm" | "rightLeg" | "leftLeg";
 export type LimbPlan = {
   id: LimbId;
   pivot: Vec3;
-  /** +1 hinges on +Z (kneecap). -1 hinges on -Z (point of the elbow). */
+  /** +1 folds the calf backward. -1 folds the forearm forward. */
   hingeSign: 1 | -1;
-  /** Hinge point in shoulder/hip space. */
+  /** Hinge at the center of the cross-section, in shoulder/hip space. */
   joint: Vec3;
   upper: Segment;
   lower: Segment;
+  /** Cube centered on the hinge that stays with the upper half and closes the wedge. */
+  fill: Segment;
   upperShell: Segment;
   lowerShell: Segment;
+  fillShell: Segment;
   uv: { u: number; v: number; w: number; d: number };
   overlay: { u: number; v: number; w: number; d: number };
 };
-
-function shellZ(depth: number, hingeSign: 1 | -1) {
-  const into = -hingeSign;
-  const far = into * depth + into * SHELL;
-  const cover = -into * HINGE_COVER;
-  const z0 = Math.min(cover, far);
-  const z1 = Math.max(cover, far);
-  return { center: (z0 + z1) / 2, size: z1 - z0 };
-}
 
 function planLimb(
   id: LimbId,
@@ -63,25 +54,38 @@ function planLimb(
     size: [width, upperLen, depth],
     center: [offsetX, -upperLen / 2, 0],
   };
-  const joint: Vec3 = [offsetX, -SEGMENT, hingeSign * (depth / 2)];
+  // Center of the cut, not the inner edge and not a front/back corner.
+  // The lower box is parented here, so its own center x/z stay 0 or the forearm steps sideways.
+  const joint: Vec3 = [offsetX, -SEGMENT, 0];
   const lower: Segment = {
     size: [width, lowerLen, depth],
-    center: [offsetX, (OVERLAP - SEGMENT) / 2, -hingeSign * (depth / 2)],
+    center: [0, (OVERLAP - SEGMENT) / 2, 0],
   };
-  const zShell = shellZ(depth, hingeSign);
-  const upperTop = SHELL;
-  const upperBottom = -upperLen;
-  const upperShell: Segment = {
-    size: [width + SHELL * 2, upperTop - upperBottom, zShell.size],
-    center: [offsetX, (upperTop + upperBottom) / 2, zShell.center],
+  const fill: Segment = {
+    size: [width - 0.12, depth - 0.12, depth - 0.12],
+    center: [offsetX, -SEGMENT, 0],
   };
-  const lowerTop = OVERLAP;
-  const lowerBottom = -SEGMENT - SHELL;
-  const lowerShell: Segment = {
-    size: [width + SHELL * 2, lowerTop - lowerBottom, zShell.size],
-    center: [offsetX, (lowerTop + lowerBottom) / 2, zShell.center],
+  const inflate = (segment: Segment, centerX: number): Segment => ({
+    size: [segment.size[0] + SHELL * 2, segment.size[1] + SHELL * 2, segment.size[2] + SHELL * 2],
+    center: [centerX, segment.center[1], segment.center[2]],
+  });
+  return {
+    id,
+    pivot,
+    hingeSign,
+    joint,
+    upper,
+    lower,
+    fill,
+    upperShell: inflate(upper, offsetX),
+    lowerShell: inflate(lower, 0),
+    fillShell: {
+      size: [width + SHELL * 2 - 0.08, depth + SHELL * 2 - 0.08, depth + SHELL * 2 - 0.08],
+      center: [offsetX, -SEGMENT, 0],
+    },
+    uv,
+    overlay,
   };
-  return { id, pivot, hingeSign, joint, upper, lower, upperShell, lowerShell, uv, overlay };
 }
 
 export function planLimbs(model: ModelType): LimbPlan[] {

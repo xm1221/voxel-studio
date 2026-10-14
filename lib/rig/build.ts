@@ -20,7 +20,7 @@ import {
   type Texture,
 } from "three";
 import type { Joints, ModelType } from "../types";
-import { planLimbs, seatShift, type LimbPlan, type Segment } from "./layout";
+import { FOOT_Y, planLimbs, seatShift, type LimbPlan, type Segment } from "./layout";
 import { buildBoxUVs, capFace, type UvRect } from "./uv";
 
 const DEG = Math.PI / 180;
@@ -67,6 +67,7 @@ export type Rig = {
   nameTex: CanvasTexture;
   bubbleTex: CanvasTexture;
   ring: Mesh;
+  contact: Mesh;
   skinUrl: string;
   capeUrl: string | null;
   token: number;
@@ -166,11 +167,34 @@ function addLimb(
   const lowerCap = jointTexel(plan.uv, 6);
   placeBox(pivot, rig, plan.upper, limbUvs(plan.uv, 0), limb, "limb", { face: 3, ...upperCap });
   placeBox(joint, rig, plan.lower, limbUvs(plan.uv, 6), limbJoint, "limbJoint", { face: 2, ...lowerCap });
+  placeFill(pivot, rig, plan.fill, limb, "limb", upperCap.px, upperCap.py);
   const upperOverlay = jointTexel(plan.overlay, 5);
   const lowerOverlay = jointTexel(plan.overlay, 6);
   placeBox(pivot, rig, plan.upperShell, limbUvs(plan.overlay, 0), shell, "outerLimb", { face: 3, ...upperOverlay });
   placeBox(joint, rig, plan.lowerShell, limbUvs(plan.overlay, 6), shellJoint, "outerJoint", { face: 2, ...lowerOverlay });
+  placeFill(pivot, rig, plan.fillShell, shell, "outerLimb", upperOverlay.px, upperOverlay.py);
   return { pivot, joint };
+}
+
+/** Solid cube on the hinge so a bend does not open a hole or a sideways step. */
+function placeFill(
+  parent: Group,
+  rig: Pick<Rig, "parts" | "outlines" | "outlineMat">,
+  segment: Segment,
+  material: Material,
+  kind: PartKind,
+  px: number,
+  py: number,
+) {
+  const geometry = new BoxGeometry(segment.size[0], segment.size[1], segment.size[2]);
+  const uvs = buildBoxUVs({ u: 0, v: 0, w: 1, h: 1, d: 1, texW: 64, texH: 64 });
+  for (let face = 0; face < 6; face += 1) capFace(uvs, face, px, py, 64, 64);
+  geometry.setAttribute("uv", new BufferAttribute(uvs, 2));
+  const mesh = new Mesh(geometry, material);
+  mesh.position.set(segment.center[0], segment.center[1], segment.center[2]);
+  mesh.castShadow = false;
+  parent.add(mesh);
+  rig.parts.push({ mesh, kind });
 }
 
 export function buildRig(model: ModelType, gradient: Texture): Rig {
@@ -319,6 +343,7 @@ export function buildRig(model: ModelType, gradient: Texture): Rig {
     nameTex,
     bubbleTex,
     ring,
+    contact,
     skinUrl: "",
     capeUrl: null,
     token: 0,
@@ -351,6 +376,9 @@ export function applyJoints(
   rig.lHip.position.z = rig.hipZ + seat.hipForward;
   rig.root.rotation.set(0, 0, extra.roll * DEG);
   rig.root.position.set(x + extra.sway, seat.y + extra.bob, 0);
+  const floor = FOOT_Y - (seat.y + extra.bob);
+  rig.ring.position.y = floor - 0.02;
+  rig.contact.position.y = floor - 0.05;
   rig.cape.rotation.x = (CAPE_REST + extra.cape) * DEG;
 }
 
