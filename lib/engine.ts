@@ -1,554 +1,25 @@
 import {
-  AdditiveBlending,
-  AmbientLight,
-  BoxGeometry,
-  BufferAttribute,
   CanvasTexture,
-  CircleGeometry,
-  Color,
-  DirectionalLight,
-  BackSide,
-  DoubleSide,
-  Fog,
-  FrontSide,
   Group,
-  HemisphereLight,
   Mesh,
-  MeshBasicMaterial,
-  MeshStandardMaterial,
-  MeshToonMaterial,
   NearestFilter,
-  Object3D,
-  PCFShadowMap,
+  PCFSoftShadowMap,
   PerspectiveCamera,
-  PlaneGeometry,
-  RingGeometry,
   Scene,
-  ShadowMaterial,
   SRGBColorSpace,
-  Texture,
-  Vector2,
   WebGLRenderer,
   type Material,
 } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { encodeGif, type GifFrame } from "./gif";
+import { captureClip, captureStill } from "./capture";
+import { drawBubble, drawTag } from "./labels";
 import { phaseOffset, sampleClip } from "./motion";
-import type { BackgroundId, CameraSnapshot, GradeId, Joints, LightId, ModelType, OutlineId, SceneDraft } from "./types";
+import { applyJoints, buildRig, configureTexture, type Rig } from "./rig/build";
+import { applyLook } from "./rig/look";
+import { applyLights, createLights } from "./lighting";
+import { applyStage, createStage } from "./stage";
 import { loadImage, loadSkinToCanvas } from "./skin-image";
-
-const DEG = Math.PI / 180;
-
-type PartKind = "inner" | "limb" | "limbJoint" | "outer" | "outerLimb" | "outerJoint";
-
-type Rig = {
-  id: string;
-  model: ModelType;
-  root: Group;
-  head: Group;
-  body: Group;
-  rShoulder: Group;
-  rElbow: Group;
-  lShoulder: Group;
-  lElbow: Group;
-  rHip: Group;
-  rKnee: Group;
-  lHip: Group;
-  lKnee: Group;
-  parts: { mesh: Mesh; kind: PartKind }[];
-  outlines: Mesh[];
-  inner: MeshStandardMaterial;
-  limb: MeshStandardMaterial;
-  limbJoint: MeshStandardMaterial;
-  outer: MeshStandardMaterial;
-  outerLimb: MeshStandardMaterial;
-  outerJoint: MeshStandardMaterial;
-  toonInner: MeshToonMaterial;
-  toonLimb: MeshToonMaterial;
-  toonLimbJoint: MeshToonMaterial;
-  toonOuter: MeshToonMaterial;
-  toonOuterLimb: MeshToonMaterial;
-  toonOuterJoint: MeshToonMaterial;
-  outlineMat: MeshBasicMaterial;
-  capeMat: MeshStandardMaterial;
-  cape: Mesh;
-  nametag: Mesh;
-  bubble: Mesh;
-  nameCanvas: HTMLCanvasElement;
-  bubbleCanvas: HTMLCanvasElement;
-  nameTex: CanvasTexture;
-  bubbleTex: CanvasTexture;
-  ring: Mesh;
-  skinUrl: string;
-  capeUrl: string | null;
-  token: number;
-  capeToken: number;
-  texture: CanvasTexture | null;
-  capeTexture: CanvasTexture | null;
-  lastTag: string;
-  lastBubble: string;
-};
-
-function setUVs(
-  box: BoxGeometry,
-  u: number,
-  v: number,
-  width: number,
-  height: number,
-  depth: number,
-  textureWidth: number,
-  textureHeight: number,
-  sideOffsetY = 0,
-) {
-  const toFace = (x1: number, y1: number, x2: number, y2: number) => [
-    new Vector2(x1 / textureWidth, 1 - y2 / textureHeight),
-    new Vector2(x2 / textureWidth, 1 - y2 / textureHeight),
-    new Vector2(x2 / textureWidth, 1 - y1 / textureHeight),
-    new Vector2(x1 / textureWidth, 1 - y1 / textureHeight),
-  ];
-  const top = toFace(u + depth, v, u + width + depth, v + depth);
-  const bottom = toFace(u + width + depth, v, u + width * 2 + depth, v + depth);
-  const sideY = v + depth + sideOffsetY;
-  const left = toFace(u, sideY, u + depth, sideY + height);
-  const front = toFace(u + depth, sideY, u + width + depth, sideY + height);
-  const right = toFace(u + width + depth, sideY, u + width + depth * 2, sideY + height);
-  const back = toFace(u + width + depth * 2, sideY, u + width * 2 + depth * 2, sideY + height);
-  const order = [
-    [right[3], right[2], right[0], right[1]],
-    [left[3], left[2], left[0], left[1]],
-    [top[3], top[2], top[0], top[1]],
-    [bottom[0], bottom[1], bottom[3], bottom[2]],
-    [front[3], front[2], front[0], front[1]],
-    [back[3], back[2], back[0], back[1]],
-  ];
-  const data: number[] = [];
-  for (const face of order) {
-    for (const uv of face) data.push(uv.x, uv.y);
-  }
-  const attr = box.getAttribute("uv") as BufferAttribute;
-  attr.set(new Float32Array(data));
-  attr.needsUpdate = true;
-}
-
-function paintCap(box: BoxGeometry, face: number, u: number, v: number) {
-  const attr = box.getAttribute("uv") as BufferAttribute;
-  for (let i = 0; i < 4; i += 1) attr.setXY(face * 4 + i, u, v);
-  attr.needsUpdate = true;
-}
-
-function cutoutMaterial(biased: boolean) {
-  const material = new MeshStandardMaterial({
-    roughness: 0.94,
-    metalness: 0,
-    side: FrontSide,
-    alphaTest: biased ? 0 : 0,
-  });
-  if (biased) {
-    material.polygonOffset = true;
-    material.polygonOffsetFactor = 1;
-    material.polygonOffsetUnits = 1;
-  }
-  return material;
-}
-
-function toonMaterial(gradient: Texture, biased: boolean, outer: boolean) {
-  const material = new MeshToonMaterial({
-    gradientMap: gradient,
-    side: FrontSide,
-    alphaTest: outer ? 0.5 : 0,
-  });
-  if (biased) {
-    material.polygonOffset = true;
-    material.polygonOffsetFactor = 1;
-    material.polygonOffsetUnits = 1;
-  }
-  return material;
-}
-
-function addBox(
-  parent: Object3D,
-  rig: Pick<Rig, "parts" | "outlines" | "outlineMat">,
-  width: number,
-  height: number,
-  depth: number,
-  uv: { u: number; v: number; w: number; h: number; d: number; side: number; texW: number; texH: number },
-  material: Material,
-  kind: PartKind,
-  position: [number, number, number],
-  cap?: { face: number; u: number; v: number } | Array<{ face: number; u: number; v: number }>,
-  outline = true,
-) {
-  const geometry = new BoxGeometry(width, height, depth);
-  setUVs(geometry, uv.u, uv.v, uv.w, uv.h, uv.d, uv.texW, uv.texH, uv.side);
-  const caps = Array.isArray(cap) ? cap : cap ? [cap] : [];
-  for (const item of caps) paintCap(geometry, item.face, item.u, item.v);
-  const mesh = new Mesh(geometry, material);
-  mesh.position.set(position[0], position[1], position[2]);
-  mesh.castShadow = kind === "inner" || kind === "limb";
-  parent.add(mesh);
-  rig.parts.push({ mesh, kind });
-  if (outline && (kind === "inner" || kind === "limb")) {
-    const outline = new Mesh(geometry, rig.outlineMat);
-    outline.position.copy(mesh.position);
-    outline.scale.setScalar(1.05);
-    outline.castShadow = false;
-    outline.visible = false;
-    parent.add(outline);
-    rig.outlines.push(outline);
-  }
-  return mesh;
-}
-
-function buildRig(model: ModelType, gradient: Texture): Rig {
-  const slim = model === "slim";
-  const armW = slim ? 3 : 4;
-  const root = new Group();
-  const skin = new Group();
-  skin.position.y = 8;
-  root.add(skin);
-
-  const inner = cutoutMaterial(false);
-  const limb = cutoutMaterial(true);
-  const outer = new MeshStandardMaterial({
-    roughness: 0.94,
-    metalness: 0,
-    side: FrontSide,
-    transparent: true,
-    alphaTest: 0.5,
-    depthWrite: true,
-  });
-  const outerLimb = outer.clone();
-  outerLimb.polygonOffset = true;
-  outerLimb.polygonOffsetFactor = -1;
-  outerLimb.polygonOffsetUnits = -1;
-  const toonInner = toonMaterial(gradient, false, false);
-  const toonLimb = toonMaterial(gradient, true, false);
-  const toonOuter = toonMaterial(gradient, false, true);
-  const toonOuterLimb = toonMaterial(gradient, true, true);
-  const limbJoint = limb.clone();
-  limbJoint.polygonOffsetFactor = 4;
-  limbJoint.polygonOffsetUnits = 4;
-  const outerJoint = outerLimb.clone();
-  outerJoint.polygonOffsetFactor = 3;
-  outerJoint.polygonOffsetUnits = 3;
-  const toonLimbJoint = toonLimb.clone();
-  toonLimbJoint.polygonOffsetFactor = 4;
-  toonLimbJoint.polygonOffsetUnits = 4;
-  const toonOuterJoint = toonOuterLimb.clone();
-  toonOuterJoint.polygonOffsetFactor = 3;
-  toonOuterJoint.polygonOffsetUnits = 3;
-  const outlineMat = new MeshBasicMaterial({ color: 0x14120f, side: BackSide });
-
-  const rigBase = {
-    parts: [] as Rig["parts"],
-    outlines: [] as Mesh[],
-    outlineMat,
-  };
-
-  const head = new Group();
-  head.name = "head";
-  skin.add(head);
-  addBox(head, rigBase, 8, 8, 8, { u: 0, v: 0, w: 8, h: 8, d: 8, side: 0, texW: 64, texH: 64 }, inner, "inner", [0, 4, 0]);
-  addBox(head, rigBase, 9, 9, 9, { u: 32, v: 0, w: 8, h: 8, d: 8, side: 0, texW: 64, texH: 64 }, outer, "outer", [0, 4, 0]);
-
-  const body = new Group();
-  body.name = "body";
-  body.position.y = -6;
-  skin.add(body);
-  addBox(body, rigBase, 8, 12, 4, { u: 16, v: 16, w: 8, h: 12, d: 4, side: 0, texW: 64, texH: 64 }, inner, "inner", [0, 0, 0]);
-  addBox(body, rigBase, 8.5, 12.5, 4.5, { u: 16, v: 32, w: 8, h: 12, d: 4, side: 0, texW: 64, texH: 64 }, outer, "outer", [0, 0, 0]);
-
-  const armX = slim ? 0.5 : 1;
-  const hinge = (
-    anchor: Group,
-    width: number,
-    depth: number,
-    u: number,
-    v: number,
-    ou: number,
-    ov: number,
-    topY: number,
-    fold: 1 | -1,
-  ) => {
-    const jointY = topY - 6;
-    const endY = topY - 11.65;
-    const kiss = 0.08;
-    const upperH = 6 + kiss;
-    const upperCenter = (topY + jointY - kiss) / 2;
-    const lowerH = jointY + kiss - endY;
-    const lowerCenter = (jointY + kiss + endY) / 2;
-    const shell = 0.5;
-    const outerW = width + shell;
-    const outerD = depth + shell;
-    const pivot = new Group();
-    // Hinge on the outside of the fold: elbows bend forward, knees bend back.
-    pivot.position.set(0, jointY, (fold * depth) / 2);
-    anchor.add(pivot);
-    const upper = addBox(anchor, rigBase, width, upperH, depth, { u, v, w: width, h: 6, d: depth, side: 0, texW: 64, texH: 64 }, limb, "limb", [0, upperCenter, 0]);
-    const upperOuter = addBox(
-      anchor,
-      rigBase,
-      outerW,
-      upperH + shell * 0.5,
-      outerD,
-      { u: ou, v: ov, w: width, h: 6, d: depth, side: 0, texW: 64, texH: 64 },
-      outerLimb,
-      "outerLimb",
-      [0, upperCenter + shell * 0.25, (-fold * shell) / 2],
-    );
-    const lower = addBox(pivot, rigBase, width, lowerH, depth, { u, v, w: width, h: 6, d: depth, side: 6, texW: 64, texH: 64 }, limbJoint, "limbJoint", [0, lowerCenter - jointY, (-fold * depth) / 2]);
-    const lowerOuterH = lowerH + shell * 0.5;
-    const lowerOuter = addBox(
-      pivot,
-      rigBase,
-      outerW,
-      lowerOuterH,
-      outerD,
-      { u: ou, v: ov, w: width, h: 6, d: depth, side: 6, texW: 64, texH: 64 },
-      outerJoint,
-      "outerJoint",
-      [0, kiss - lowerOuterH / 2, (-fold * outerD) / 2],
-    );
-    return pivot;
-  };
-
-  const makeArm = (side: "right" | "left") => {
-    const shoulder = new Group();
-    shoulder.position.set(side === "right" ? -5 : 5, -2, 0);
-    skin.add(shoulder);
-    const assembly = new Group();
-    assembly.position.x = side === "right" ? -armX : armX;
-    shoulder.add(assembly);
-    const u = side === "right" ? 40 : 32;
-    const v = side === "right" ? 16 : 48;
-    const ou = side === "right" ? 40 : 48;
-    const ov = side === "right" ? 32 : 48;
-    return { shoulder, elbow: hinge(assembly, armW, 4, u, v, ou, ov, 2, 1) };
-  };
-
-  const right = makeArm("right");
-  const left = makeArm("left");
-
-  const makeLeg = (side: "right" | "left") => {
-    const hip = new Group();
-    hip.position.set(side === "right" ? -1.9 : 1.9, -12, -0.1);
-    skin.add(hip);
-    const u = side === "right" ? 0 : 16;
-    const v = side === "right" ? 16 : 48;
-    const ou = side === "right" ? 0 : 0;
-    const ov = side === "right" ? 32 : 48;
-    return { hip, knee: hinge(hip, 4, 4, u, v, ou, ov, 0, -1) };
-  };
-
-  const rightLeg = makeLeg("right");
-  const leftLeg = makeLeg("left");
-
-  const capeGeo = new BoxGeometry(10, 16, 1);
-  setUVs(capeGeo, 0, 0, 10, 16, 1, 64, 32);
-  const capeMat = new MeshStandardMaterial({
-    roughness: 0.9,
-    metalness: 0,
-    side: DoubleSide,
-    transparent: true,
-    alphaTest: 0.4,
-  });
-  const cape = new Mesh(capeGeo, capeMat);
-  cape.position.set(0, 4, -2.4);
-  cape.rotation.x = 12 * DEG;
-  cape.visible = false;
-  cape.castShadow = true;
-  body.add(cape);
-
-  const nameCanvas = document.createElement("canvas");
-  nameCanvas.width = 512;
-  nameCanvas.height = 128;
-  const bubbleCanvas = document.createElement("canvas");
-  bubbleCanvas.width = 512;
-  bubbleCanvas.height = 192;
-  const nameTex = new CanvasTexture(nameCanvas);
-  const bubbleTex = new CanvasTexture(bubbleCanvas);
-  nameTex.colorSpace = SRGBColorSpace;
-  bubbleTex.colorSpace = SRGBColorSpace;
-  const nametag = new Mesh(
-    new PlaneGeometry(18, 4.5),
-    new MeshBasicMaterial({ map: nameTex, transparent: true, depthWrite: false }),
-  );
-  nametag.position.set(0, 20, 0);
-  nametag.visible = false;
-  root.add(nametag);
-  const bubble = new Mesh(
-    new PlaneGeometry(16, 6),
-    new MeshBasicMaterial({ map: bubbleTex, transparent: true, depthWrite: false }),
-  );
-  bubble.position.set(11, 16, 0);
-  bubble.visible = false;
-  root.add(bubble);
-
-  const ring = new Mesh(
-    new RingGeometry(6.2, 6.7, 48),
-    new MeshBasicMaterial({ color: 0x2f6fed, side: DoubleSide, transparent: true, opacity: 0.95 }),
-  );
-  ring.rotation.x = -Math.PI / 2;
-  ring.position.y = -15.85;
-  root.add(ring);
-
-  const contact = new Mesh(
-    new CircleGeometry(5.2, 28),
-    new MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false }),
-  );
-  contact.rotation.x = -Math.PI / 2;
-  contact.position.y = -15.92;
-  root.add(contact);
-
-  return {
-    id: "",
-    model,
-    root,
-    head,
-    body,
-    rShoulder: right.shoulder,
-    rElbow: right.elbow,
-    lShoulder: left.shoulder,
-    lElbow: left.elbow,
-    rHip: rightLeg.hip,
-    rKnee: rightLeg.knee,
-    lHip: leftLeg.hip,
-    lKnee: leftLeg.knee,
-    parts: rigBase.parts,
-    outlines: rigBase.outlines,
-    inner,
-    limb,
-    limbJoint,
-    outer,
-    outerLimb,
-    outerJoint,
-    toonInner,
-    toonLimb,
-    toonLimbJoint,
-    toonOuter,
-    toonOuterLimb,
-    toonOuterJoint,
-    outlineMat,
-    capeMat,
-    cape,
-    nametag,
-    bubble,
-    nameCanvas,
-    bubbleCanvas,
-    nameTex,
-    bubbleTex,
-    ring,
-    skinUrl: "",
-    capeUrl: null,
-    token: 0,
-    capeToken: 0,
-    texture: null,
-    capeTexture: null,
-    lastTag: "",
-    lastBubble: "",
-  };
-}
-
-function applyJoints(
-  rig: Rig,
-  joints: Joints,
-  x: number,
-  extra: { bob: number; sway: number; roll: number; cape: number },
-) {
-  rig.head.rotation.set(joints.headX * DEG, joints.headY * DEG, 0);
-  rig.body.rotation.set(joints.bodyX * DEG, 0, 0);
-  rig.rShoulder.rotation.set(joints.rArmX * DEG, 0, joints.rArmZ * DEG);
-  rig.rElbow.rotation.set(joints.rElbow * DEG, 0, 0);
-  rig.lShoulder.rotation.set(joints.lArmX * DEG, 0, joints.lArmZ * DEG);
-  rig.lElbow.rotation.set(joints.lElbow * DEG, 0, 0);
-  rig.rHip.rotation.set(joints.rLegX * DEG, 0, 0);
-  rig.rKnee.rotation.set(joints.rKnee * DEG, 0, 0);
-  rig.lHip.rotation.set(joints.lLegX * DEG, 0, 0);
-  rig.lKnee.rotation.set(joints.lKnee * DEG, 0, 0);
-  const sitting = joints.rLegX < -50 && joints.lLegX < -50 && joints.rKnee > 45 && joints.lKnee > 45;
-  rig.root.rotation.set(0, 0, extra.roll * DEG);
-  rig.root.position.set(x + extra.sway, (sitting ? -6 : 0) + extra.bob, 0);
-  rig.cape.rotation.x = (12 + extra.cape) * DEG;
-}
-
-function drawTag(canvas: HTMLCanvasElement, text: string) {
-  const context = canvas.getContext("2d");
-  if (!context) return;
-  context.clearRect(0, 0, canvas.width, canvas.height);
-  context.font = "600 64px Outfit, 'WenQuanYi Micro Hei', sans-serif";
-  const width = Math.min(context.measureText(text).width, 460);
-  const boxW = width + 48;
-  const boxH = 84;
-  const x = (canvas.width - boxW) / 2;
-  const y = 22;
-  context.fillStyle = "rgba(12, 12, 14, 0.55)";
-  context.fillRect(x, y, boxW, boxH);
-  context.fillStyle = "#ffffff";
-  context.textAlign = "center";
-  context.textBaseline = "middle";
-  context.fillText(text, canvas.width / 2, y + boxH / 2, 460);
-}
-
-function drawBubble(canvas: HTMLCanvasElement, text: string) {
-  const context = canvas.getContext("2d");
-  if (!context) return;
-  context.clearRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = "#ffffff";
-  roundRect(context, 16, 12, 480, 120, 28);
-  context.beginPath();
-  context.moveTo(46, 132);
-  context.lineTo(28, 176);
-  context.lineTo(92, 132);
-  context.fill();
-  context.fillStyle = "#16325c";
-  context.font = "600 42px Outfit, 'WenQuanYi Micro Hei', sans-serif";
-  context.textAlign = "center";
-  context.textBaseline = "middle";
-  context.fillText(text, 256, 72, 440);
-}
-
-function roundRect(context: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  context.beginPath();
-  context.moveTo(x + r, y);
-  context.arcTo(x + w, y, x + w, y + h, r);
-  context.arcTo(x + w, y + h, x, y + h, r);
-  context.arcTo(x, y + h, x, y, r);
-  context.arcTo(x, y, x + w, y, r);
-  context.closePath();
-  context.fill();
-}
-
-function pixelTexture(paint: (context: CanvasRenderingContext2D) => void) {
-  const canvas = document.createElement("canvas");
-  canvas.width = 16;
-  canvas.height = 16;
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("画布不可用。");
-  paint(context);
-  const texture = new CanvasTexture(canvas);
-  texture.magFilter = NearestFilter;
-  texture.minFilter = NearestFilter;
-  texture.colorSpace = SRGBColorSpace;
-  texture.needsUpdate = true;
-  return texture;
-}
-
-function speck(context: CanvasRenderingContext2D, base: string, colors: string[], salt: number) {
-  context.fillStyle = base;
-  context.fillRect(0, 0, 16, 16);
-  for (let i = 0; i < 28; i += 1) {
-    const n = Math.abs(Math.sin((i + 1) * salt) * 10000);
-    context.fillStyle = colors[i % colors.length];
-    context.fillRect(Math.floor(n % 16), Math.floor((n * 1.7) % 16), 1, 1);
-  }
-}
-
-const LIGHTS: Record<LightId, { key: number; fill: number; rim: number; keyColor: number; fillColor: number; rimColor: number; hemi: number }> = {
-  soft: { key: 2.35, fill: 0.85, rim: 1.45, keyColor: 0xfff1dc, fillColor: 0xc9d6ff, rimColor: 0xffe2c4, hemi: 0.62 },
-  hard: { key: 3.5, fill: 0.28, rim: 1.9, keyColor: 0xffffff, fillColor: 0x9eb0d1, rimColor: 0xfff6ea, hemi: 0.34 },
-  neon: { key: 2.5, fill: 1.35, rim: 2.3, keyColor: 0xff4fd8, fillColor: 0x3de1ff, rimColor: 0xb388ff, hemi: 0.28 },
-  moon: { key: 1.85, fill: 0.4, rim: 1.55, keyColor: 0xd5e4ff, fillColor: 0x1b3b6a, rimColor: 0xf4f8ff, hemi: 0.22 },
-};
+import type { CameraSnapshot, Joints, SceneDraft } from "./types";
 
 type ClipSampleState = {
   joints: Joints;
@@ -559,35 +30,18 @@ type ClipSampleState = {
   ready: boolean;
 };
 
-const BACKGROUNDS: Record<Exclude<BackgroundId, "none">, number> = {
-  studio: 0xe4eef9,
-  noon: 0x79b4ea,
-  sunset: 0xe08a52,
-  night: 0x0d1424,
-  nether: 0x401512,
-};
-
 export class StudioEngine {
   readonly renderer: WebGLRenderer;
   readonly scene = new Scene();
   readonly camera: PerspectiveCamera;
   readonly controls: OrbitControls;
   private readonly rigs = new Map<string, Rig>();
-  private readonly holder: Group = new Group();
-  private readonly key: DirectionalLight;
-  private readonly fill: DirectionalLight;
-  private readonly rim: DirectionalLight;
-  private readonly hemi: HemisphereLight;
-  private readonly shadowFloor: Mesh;
-  private readonly studioFloor: Mesh;
-  private readonly grass: Group;
-  private readonly nether: Group;
-  private readonly rays: Group;
-  private readonly rayMat: MeshBasicMaterial;
-  private readonly gradient: Texture;
+  private readonly holder = new Group();
+  private readonly lights;
+  private readonly stage;
+  private readonly gradient: CanvasTexture;
   private frame = 0;
   private observer: ResizeObserver;
-  private backgroundColor = new Color(BACKGROUNDS.studio);
   private draft: SceneDraft | null = null;
   private clipTime = 0;
   private lastClip = "";
@@ -600,20 +54,21 @@ export class StudioEngine {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.outputColorSpace = SRGBColorSpace;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = PCFShadowMap;
+    this.renderer.shadowMap.type = PCFSoftShadowMap;
     this.renderer.setClearColor(0x000000, 0);
-    this.renderer.domElement.style.width = "100%";
-    this.renderer.domElement.style.height = "100%";
-    this.renderer.domElement.style.display = "block";
-    this.renderer.domElement.style.position = "absolute";
-    this.renderer.domElement.style.inset = "0";
-    this.renderer.domElement.style.touchAction = "none";
-    this.renderer.domElement.setAttribute("aria-label", "皮肤预览");
-    container.appendChild(this.renderer.domElement);
+    const canvas = this.renderer.domElement;
+    canvas.style.width = "100%";
+    canvas.style.height = "100%";
+    canvas.style.display = "block";
+    canvas.style.position = "absolute";
+    canvas.style.inset = "0";
+    canvas.style.touchAction = "none";
+    canvas.setAttribute("aria-label", "皮肤预览");
+    container.appendChild(canvas);
 
     this.camera = new PerspectiveCamera(32, 1, 0.1, 400);
     this.camera.position.set(26, 10, 64);
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls = new OrbitControls(this.camera, canvas);
     this.controls.target.set(0, 2, 0);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.08;
@@ -623,82 +78,8 @@ export class StudioEngine {
     this.controls.update();
 
     this.scene.add(this.holder);
-    this.hemi = new HemisphereLight(0xfff6ec, 0x241c18, 0.62);
-    this.scene.add(this.hemi);
-    this.scene.add(new AmbientLight(0xffffff, 0.18));
-    this.key = new DirectionalLight(0xfff1dc, 2.35);
-    this.key.position.set(28, 52, 34);
-    this.key.castShadow = true;
-    this.key.shadow.mapSize.set(2048, 2048);
-    this.key.shadow.bias = -0.0004;
-    this.scene.add(this.key, this.key.target);
-    this.fill = new DirectionalLight(0xc9d6ff, 0.85);
-    this.fill.position.set(-36, 18, 28);
-    this.scene.add(this.fill);
-    this.rim = new DirectionalLight(0xffe2c4, 1.45);
-    this.rim.position.set(-8, 26, -42);
-    this.scene.add(this.rim);
-
-    this.shadowFloor = new Mesh(
-      new PlaneGeometry(220, 220),
-      new ShadowMaterial({ opacity: 0.38 }),
-    );
-    this.shadowFloor.rotation.x = -Math.PI / 2;
-    this.shadowFloor.position.y = -15.9;
-    this.shadowFloor.receiveShadow = true;
-    this.scene.add(this.shadowFloor);
-
-    const studioMap = pixelTexture((context) => {
-      const gradient = context.createRadialGradient(8, 8, 1, 8, 8, 8);
-      gradient.addColorStop(0, "#f7fbff");
-      gradient.addColorStop(1, "#d5e4f6");
-      context.fillStyle = gradient;
-      context.fillRect(0, 0, 16, 16);
-    });
-    studioMap.magFilter = NearestFilter;
-    this.studioFloor = new Mesh(
-      new CircleGeometry(78, 64),
-      new MeshStandardMaterial({ map: studioMap, roughness: 1, metalness: 0 }),
-    );
-    this.studioFloor.rotation.x = -Math.PI / 2;
-    this.studioFloor.position.y = -16;
-    this.studioFloor.receiveShadow = true;
-    this.scene.add(this.studioFloor);
-
-    const grassTop = pixelTexture((context) => speck(context, "#5d9b3a", ["#6eaf45", "#4e852f", "#87c85a"], 2.2));
-    const grassSide = pixelTexture((context) => {
-      speck(context, "#8a5a32", ["#6d4524", "#a56b3e"], 4.4);
-      context.fillStyle = "#5d9b3a";
-      context.fillRect(0, 0, 16, 4);
-    });
-    const dirt = pixelTexture((context) => speck(context, "#8a5a32", ["#6d4524", "#a56b3e", "#c98958"], 6.1));
-    this.grass = this.blockPlatform([grassSide, grassSide, grassTop, dirt, grassSide, grassSide]);
-    this.grass.visible = false;
-    this.scene.add(this.grass);
-
-    const netherSide = pixelTexture((context) => speck(context, "#6a2420", ["#8d332c", "#4d1614", "#c45a3a"], 8.2));
-    const netherTop = pixelTexture((context) => speck(context, "#7a2c24", ["#a14332", "#511814"], 3.3));
-    this.nether = this.blockPlatform([netherSide, netherSide, netherTop, netherSide, netherSide, netherSide]);
-    this.nether.visible = false;
-    this.scene.add(this.nether);
-
-    this.rayMat = new MeshBasicMaterial({
-      color: 0xfff0d2,
-      transparent: true,
-      opacity: 0.09,
-      depthWrite: false,
-      blending: AdditiveBlending,
-      side: DoubleSide,
-    });
-    this.rays = new Group();
-    for (let i = 0; i < 7; i += 1) {
-      const ray = new Mesh(new PlaneGeometry(5.5, 78), this.rayMat);
-      ray.position.set(-20 + i * 7, 28, -6);
-      ray.rotation.z = -0.22 + i * 0.06;
-      this.rays.add(ray);
-    }
-    this.rays.visible = false;
-    this.scene.add(this.rays);
+    this.lights = createLights(this.scene);
+    this.stage = createStage(this.scene);
 
     const gradientCanvas = document.createElement("canvas");
     gradientCanvas.width = 4;
@@ -717,29 +98,13 @@ export class StudioEngine {
     this.gradient = new CanvasTexture(gradientCanvas);
     this.gradient.magFilter = NearestFilter;
     this.gradient.minFilter = NearestFilter;
+    this.gradient.generateMipmaps = false;
 
     this.resize = this.resize.bind(this);
     this.observer = new ResizeObserver(this.resize);
     this.observer.observe(container);
     this.resize();
     this.loop();
-  }
-
-  private blockPlatform(maps: Texture[]) {
-    const group = new Group();
-    const materials = maps.map(
-      (map) => new MeshStandardMaterial({ map, roughness: 1, metalness: 0 }),
-    );
-    for (let x = -3; x <= 3; x += 1) {
-      for (let z = -3; z <= 3; z += 1) {
-        const block = new Mesh(new BoxGeometry(16, 16, 16), materials);
-        block.position.set(x * 16, -24, z * 16);
-        block.receiveShadow = true;
-        block.castShadow = false;
-        group.add(block);
-      }
-    }
-    return group;
   }
 
   private loop = () => {
@@ -796,7 +161,7 @@ export class StudioEngine {
         this.rigs.set(player.id, rig);
       }
       rig.ring.visible = player.id === draft.activeId;
-      this.applyLook(rig, draft.grade, draft.outline, draft.showOuter);
+      applyLook(rig, draft.grade, draft.outline, draft.showOuter);
       this.applyLabels(rig, player.nametag, player.bubble);
       if (player.skinUrl && rig.skinUrl !== player.skinUrl) {
         const token = ++rig.token;
@@ -813,7 +178,8 @@ export class StudioEngine {
       }
     });
 
-    this.applyWorld(draft);
+    applyLights(this.lights, draft);
+    applyStage(this.stage, this.scene, this.renderer, draft);
     this.poseAll(0);
   }
 
@@ -846,51 +212,6 @@ export class StudioEngine {
       const x = (index - (draft.players.length - 1) / 2) * 22;
       applyJoints(rig, shown.joints, x, shown);
     });
-  }
-
-  private applyLook(rig: Rig, grade: GradeId, outline: OutlineId, showOuter: boolean) {
-    const comic = grade === "comic";
-    const materialFor = (kind: PartKind) => {
-      if (kind === "inner") return comic ? rig.toonInner : rig.inner;
-      if (kind === "limb") return comic ? rig.toonLimb : rig.limb;
-      if (kind === "limbJoint") return comic ? rig.toonLimbJoint : rig.limbJoint;
-      if (kind === "outer") return comic ? rig.toonOuter : rig.outer;
-      if (kind === "outerJoint") return comic ? rig.toonOuterJoint : rig.outerJoint;
-      return comic ? rig.toonOuterLimb : rig.outerLimb;
-    };
-    for (const part of rig.parts) {
-      part.mesh.material = materialFor(part.kind);
-      part.mesh.visible = showOuter || part.kind === "inner" || part.kind === "limb" || part.kind === "limbJoint";
-    }
-    const standards = [rig.inner, rig.limb, rig.limbJoint, rig.outer, rig.outerLimb, rig.outerJoint];
-    for (const material of standards) {
-      material.color.set(grade === "hologram" ? 0x9af6ff : grade === "ice" ? 0xd9f4ff : 0xffffff);
-      material.emissive.set(grade === "hologram" ? 0x1c6cff : grade === "ice" ? 0x7ec8ea : 0x000000);
-      material.emissiveIntensity = grade === "hologram" ? 0.85 : grade === "ice" ? 0.35 : 0;
-      material.emissiveMap = grade === "hologram" || grade === "ice" ? material.map : null;
-      material.roughness = grade === "ice" ? 0.18 : grade === "hologram" ? 0.28 : 0.94;
-      if (grade === "hologram") {
-        material.transparent = true;
-        material.opacity = 0.86;
-        material.alphaTest = 0.05;
-      } else if (material === rig.outer || material === rig.outerLimb || material === rig.outerJoint) {
-        material.transparent = true;
-        material.opacity = 1;
-        material.alphaTest = 0.5;
-      } else {
-        material.transparent = false;
-        material.opacity = 1;
-        material.alphaTest = 0;
-      }
-      material.needsUpdate = true;
-    }
-    const scale = outline === "sticker" ? 1.14 : outline === "ink" ? 1.055 : 1;
-    rig.outlineMat.color.set(outline === "sticker" ? 0xf7f4ee : 0x16130f);
-    rig.outlineMat.visible = outline !== "none";
-    for (const mesh of rig.outlines) {
-      mesh.visible = outline !== "none";
-      mesh.scale.setScalar(scale);
-    }
   }
 
   private applyLabels(rig: Rig, nametag: string, bubble: string) {
@@ -931,15 +252,26 @@ export class StudioEngine {
   private bindTexture(rig: Rig, canvas: HTMLCanvasElement) {
     if (!rig.texture) {
       rig.texture = new CanvasTexture(canvas);
-      rig.texture.magFilter = NearestFilter;
-      rig.texture.minFilter = NearestFilter;
-      rig.texture.generateMipmaps = false;
-      rig.texture.colorSpace = SRGBColorSpace;
+      configureTexture(rig.texture);
     } else {
       rig.texture.image = canvas;
     }
     rig.texture.needsUpdate = true;
-    for (const material of [rig.inner, rig.limb, rig.limbJoint, rig.outer, rig.outerLimb, rig.outerJoint, rig.toonInner, rig.toonLimb, rig.toonLimbJoint, rig.toonOuter, rig.toonOuterLimb, rig.toonOuterJoint]) {
+    const materials = [
+      rig.inner,
+      rig.limb,
+      rig.limbLower,
+      rig.outer,
+      rig.outerLimb,
+      rig.outerLimbLower,
+      rig.toonInner,
+      rig.toonLimb,
+      rig.toonLimbLower,
+      rig.toonOuter,
+      rig.toonOuterLimb,
+      rig.toonOuterLimbLower,
+    ];
+    for (const material of materials) {
       material.map = rig.texture;
       if (material.emissiveMap) material.emissiveMap = rig.texture;
       material.needsUpdate = true;
@@ -959,9 +291,7 @@ export class StudioEngine {
       context.drawImage(image, 0, 0);
       if (!rig.capeTexture) {
         rig.capeTexture = new CanvasTexture(canvas);
-        rig.capeTexture.magFilter = NearestFilter;
-        rig.capeTexture.minFilter = NearestFilter;
-        rig.capeTexture.colorSpace = SRGBColorSpace;
+        configureTexture(rig.capeTexture);
       } else {
         rig.capeTexture.image = canvas;
       }
@@ -971,48 +301,6 @@ export class StudioEngine {
     } catch {
       if (rig.capeToken === token) rig.cape.visible = false;
     }
-  }
-
-  private applyWorld(draft: SceneDraft) {
-    const preset = LIGHTS[draft.light];
-    const gain = draft.keyIntensity;
-    this.key.intensity = preset.key * gain;
-    this.fill.intensity = preset.fill;
-    this.rim.intensity = preset.rim;
-    this.key.color.set(preset.keyColor);
-    this.fill.color.set(preset.fillColor);
-    this.rim.color.set(preset.rimColor);
-    this.hemi.intensity = preset.hemi;
-    this.hemi.color.set(draft.light === "moon" ? 0xb7c8e6 : draft.light === "neon" ? 0xffd0f5 : 0xfff6ec);
-    const span = 36 + draft.players.length * 16;
-    const shadow = this.key.shadow.camera;
-    shadow.left = -span;
-    shadow.right = span;
-    shadow.top = span;
-    shadow.bottom = -span;
-    shadow.near = 8;
-    shadow.far = 180;
-    shadow.updateProjectionMatrix();
-
-    const color = draft.background === "none" ? null : BACKGROUNDS[draft.background];
-    if (color == null) {
-      this.scene.background = null;
-      this.scene.fog = null;
-      this.renderer.setClearColor(0x000000, 0);
-    } else {
-      this.backgroundColor.set(color);
-      this.scene.background = this.backgroundColor;
-      this.scene.fog = draft.background === "studio" ? null : new Fog(color, 80, 230);
-      this.renderer.setClearColor(color, 1);
-    }
-    this.studioFloor.visible = draft.background === "studio";
-    this.grass.visible = draft.background === "noon" || draft.background === "sunset" || draft.background === "night";
-    this.nether.visible = draft.background === "nether";
-    this.shadowFloor.visible = true;
-    (this.shadowFloor.material as ShadowMaterial).opacity = draft.background === "none" ? 0.45 : 0.28;
-    this.rays.visible = draft.godrays && draft.background !== "none";
-    this.rayMat.color.set(draft.background === "night" || draft.light === "moon" ? 0xc5d7ff : draft.background === "nether" ? 0xff7844 : 0xfff0d0);
-    this.rayMat.opacity = draft.background === "noon" ? 0.07 : 0.11;
   }
 
   frameBody(count: number) {
@@ -1029,9 +317,9 @@ export class StudioEngine {
   }
 
   getCamera(): CameraSnapshot {
-    const p = this.camera.position;
-    const t = this.controls.target;
-    return { p: [p.x, p.y, p.z], t: [t.x, t.y, t.z] };
+    const position = this.camera.position;
+    const target = this.controls.target;
+    return { p: [position.x, position.y, position.z], t: [target.x, target.y, target.z] };
   }
 
   setCamera(snapshot: CameraSnapshot) {
@@ -1040,167 +328,32 @@ export class StudioEngine {
     this.controls.update();
   }
 
-  async capture(options: { width: number; height: number; round: boolean; transparent: boolean }) {
-    const parent = this.renderer.domElement.parentElement;
-    const viewW = parent?.clientWidth ?? this.renderer.domElement.width;
-    const viewH = parent?.clientHeight ?? this.renderer.domElement.height;
-    const ratio = this.renderer.getPixelRatio();
-    const background = this.scene.background;
-    const fog = this.scene.fog;
-    const studio = this.studioFloor.visible;
-    const grass = this.grass.visible;
-    const nether = this.nether.visible;
-    const rays = this.rays.visible;
-    const shadowOpacity = (this.shadowFloor.material as ShadowMaterial).opacity;
-    const sample = Math.max(options.width, options.height) <= 2048 ? 2 : 1;
-
-    if (options.transparent) {
-      this.scene.background = null;
-      this.scene.fog = null;
-      this.studioFloor.visible = false;
-      this.grass.visible = false;
-      this.nether.visible = false;
-      this.rays.visible = false;
-      (this.shadowFloor.material as ShadowMaterial).opacity = 0.45;
-      this.renderer.setClearColor(0x000000, 0);
-    }
-
-    this.renderer.setPixelRatio(1);
-    this.renderer.setSize(options.width * sample, options.height * sample, false);
-    this.camera.aspect = options.width / options.height;
-    this.camera.updateProjectionMatrix();
-    this.renderer.render(this.scene, this.camera);
-
-    const output = document.createElement("canvas");
-    output.width = options.width;
-    output.height = options.height;
-    const context = output.getContext("2d");
-    if (!context) throw new Error("导出画布不可用。");
-    context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = "high";
-    if (options.round) {
-      context.beginPath();
-      context.arc(options.width / 2, options.height / 2, options.width / 2, 0, Math.PI * 2);
-      context.clip();
-    }
-    context.drawImage(this.renderer.domElement, 0, 0, options.width, options.height);
-
-    this.scene.background = background;
-    this.scene.fog = fog;
-    this.studioFloor.visible = studio;
-    this.grass.visible = grass;
-    this.nether.visible = nether;
-    this.rays.visible = rays;
-    (this.shadowFloor.material as ShadowMaterial).opacity = shadowOpacity;
-    if (background instanceof Color) this.renderer.setClearColor(background, 1);
-    else this.renderer.setClearColor(0x000000, 0);
-    this.renderer.setPixelRatio(ratio);
-    this.renderer.setSize(viewW, viewH, false);
-    this.camera.aspect = viewW / Math.max(viewH, 1);
-    this.camera.updateProjectionMatrix();
-
-    const blob = await new Promise<Blob | null>((resolve) => output.toBlob(resolve, "image/png"));
-    if (!blob) throw new Error("没有生成 PNG。");
-    return blob;
+  capture(options: { width: number; height: number; round: boolean; transparent: boolean }) {
+    return captureStill(this.host(), options);
   }
 
-  async captureClip(options: { width: number; height: number; round: boolean; transparent: boolean; frames: number; seconds: number }) {
-    const draft = this.draft;
-    if (!draft) throw new Error("场景还没准备好。");
-    const parent = this.renderer.domElement.parentElement;
-    const viewW = parent?.clientWidth ?? this.renderer.domElement.width;
-    const viewH = parent?.clientHeight ?? this.renderer.domElement.height;
-    const ratio = this.renderer.getPixelRatio();
-    const background = this.scene.background;
-    const fog = this.scene.fog;
-    const studio = this.studioFloor.visible;
-    const grass = this.grass.visible;
-    const nether = this.nether.visible;
-    const rays = this.rays.visible;
-    const shadowOpacity = (this.shadowFloor.material as ShadowMaterial).opacity;
-    const spin = this.holder.rotation.y;
-    const rings = [...this.rigs.values()].map((rig) => rig.ring.visible);
-    const output = document.createElement("canvas");
-    output.width = options.width;
-    output.height = options.height;
-    const context = output.getContext("2d", { willReadFrequently: true });
-    if (!context) throw new Error("导出画布不可用。");
-    this.held = true;
+  captureClip(options: { width: number; height: number; round: boolean; transparent: boolean; frames: number; seconds: number }) {
+    return captureClip(this.host(), options);
+  }
 
-    try {
-      if (options.transparent) {
-        this.scene.background = null;
-        this.scene.fog = null;
-        this.studioFloor.visible = false;
-        this.grass.visible = false;
-        this.nether.visible = false;
-        this.rays.visible = false;
-        (this.shadowFloor.material as ShadowMaterial).opacity = 0.45;
-        this.renderer.setClearColor(0x000000, 0);
-      }
-      for (const rig of this.rigs.values()) rig.ring.visible = false;
-      this.renderer.setPixelRatio(1);
-      this.renderer.setSize(options.width, options.height, false);
-      this.camera.aspect = options.width / options.height;
-      this.camera.updateProjectionMatrix();
-
-      const gifFrames: GifFrame[] = [];
-      const delayCs = (options.seconds / options.frames) * 100;
-      for (let frame = 0; frame < options.frames; frame += 1) {
-        const time = (frame / options.frames) * options.seconds;
-        if (draft.clip === "none") {
-          this.holder.rotation.y = (time / options.seconds) * Math.PI * 2;
-          this.poseAll(0);
-        } else {
-          this.holder.rotation.y = 0;
-          this.poseAll(0, time);
-        }
-        for (const rig of this.rigs.values()) {
-          rig.nametag.quaternion.copy(this.camera.quaternion);
-          rig.bubble.quaternion.copy(this.camera.quaternion);
-        }
-        this.renderer.render(this.scene, this.camera);
-        context.save();
-        context.clearRect(0, 0, options.width, options.height);
-        if (options.round) {
-          context.beginPath();
-          context.arc(options.width / 2, options.height / 2, options.width / 2, 0, Math.PI * 2);
-          context.clip();
-        }
-        context.imageSmoothingEnabled = true;
-        context.imageSmoothingQuality = "high";
-        context.drawImage(this.renderer.domElement, 0, 0, options.width, options.height);
-        context.restore();
-        const pixels = context.getImageData(0, 0, options.width, options.height);
-        gifFrames.push({ rgba: pixels.data, delayCs });
-      }
-      const encoded = encodeGif(gifFrames, options.width, options.height);
-      return new Blob([Uint8Array.from(encoded)], { type: "image/gif" });
-    } finally {
-      this.holder.rotation.y = spin;
-      this.scene.background = background;
-      this.scene.fog = fog;
-      this.studioFloor.visible = studio;
-      this.grass.visible = grass;
-      this.nether.visible = nether;
-      this.rays.visible = rays;
-      (this.shadowFloor.material as ShadowMaterial).opacity = shadowOpacity;
-      if (background instanceof Color) this.renderer.setClearColor(background, 1);
-      else this.renderer.setClearColor(0x000000, 0);
-      [...this.rigs.values()].forEach((rig, index) => {
-        rig.ring.visible = rings[index] ?? false;
-      });
-      this.renderer.setPixelRatio(ratio);
-      this.renderer.setSize(viewW, viewH, false);
-      this.camera.aspect = viewW / Math.max(viewH, 1);
-      this.camera.updateProjectionMatrix();
-      this.poseAll(0);
-      this.held = false;
-    }
+  private host() {
+    return {
+      renderer: this.renderer,
+      scene: this.scene,
+      camera: this.camera,
+      holder: this.holder,
+      stage: this.stage,
+      draft: this.draft,
+      rigs: this.rigs.values(),
+      poseAll: this.poseAll.bind(this),
+      setHeld: (held: boolean) => {
+        this.held = held;
+      },
+    };
   }
 
   private disposeRig(rig: Rig) {
-    const geometries = new Set<BufferGeometryLike>();
+    const geometries = new Set<{ dispose: () => void }>();
     const materials = new Set<Material>();
     rig.root.traverse((object) => {
       if (!(object instanceof Mesh)) return;
@@ -1222,9 +375,8 @@ export class StudioEngine {
     this.controls.dispose();
     for (const rig of this.rigs.values()) this.disposeRig(rig);
     this.gradient.dispose();
+    this.stage.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
 }
-
-type BufferGeometryLike = { dispose: () => void };
