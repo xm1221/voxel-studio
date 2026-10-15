@@ -125,13 +125,27 @@ On a loop, `time: 0` and `time: duration` are the same instant. The first and la
 
 Only the right arm and the cape are keyed. The head, left arm, and legs follow the current sliders. With `loop: false`, playback holds the last keyframe. A single keyframe holds that pose the whole time.
 
+### 内置动作和导入的 JSON / Built-in clips vs imported JSON
+
+- 内置动作（`sampleClip`）从这个人当前的滑块姿势（`rest`）起播。呼吸这类是在这个姿势上加偏移，挥手和跑步这类会用公式覆盖部分关节，但整段动作仍然基于这个起始姿势，所以改滑块还是会影响画面。
+
+  A built-in clip (`sampleClip`) starts from that player's current slider pose (`rest`). Idle adds an offset on top of it; wave and run overwrite some joints with formula values. Either way the clip is still built on that starting pose, so changing the sliders still changes what you see.
+
+- 导入的 JSON（`sampleAnimation`）里，某一帧写到的关节是绝对角度，不再叠加滑块；某一帧没写到的关节继续跟着当前滑块走。
+
+  In imported JSON (`sampleAnimation`), a joint that appears in a keyframe is an absolute angle, not added on top of the slider. A joint the keyframe omits keeps following the current slider pose.
+
+- 想在自己的姿势上叠一个挥手，只给手臂关节打关键帧就好。每个关节都写满，或者用烘焙过的内置动作导出，改滑块就不会再有可见变化。
+
+  To layer a wave on a custom pose, key only the arm joints. Fill in every joint, or use a baked built-in export, and the sliders stop making a visible difference.
+
 ### 容易写错的地方 / Pitfalls
 
 - `keyframes` 不能是空数组，至少要有一帧。`keyframes` cannot be an empty array. At least one keyframe is required.
 - `time` 不要超过 `duration`，也不要相等或倒序。`time` cannot pass `duration`, and ties or a decreasing order are rejected.
 - 某一帧写了 `rArmX`、下一帧没写，中间会从这一帧的角度缓回当前滑块，看起来像手自己收回去。If one keyframe sets `rArmX` and the next omits it, the arm eases from that angle back to the slider pose.
 - 想要无缝循环，要么让 `time: 0` 和 `time: duration` 的姿势一样，要么不要把最后一帧放在 `duration` 上，让它从最后一帧缓回第一帧。For a seamless loop, match the poses at `time: 0` and `time: duration`, or leave the last keyframe before `duration` so playback eases from the last keyframe back to the first.
-- 导出内置动作（行走、跑步等）时，关节是按站立姿势烘焙出来的，不是按你现在的滑块。33 帧（静止是 1 帧）。名字跟当前界面语言走。导出「静止」只是一个姿势，不是 GIF 里那种转一圈。Exporting a built-in clip (walk, run, and the others) bakes joints from the idle pose, not from your sliders. That is 33 frames, or 1 frame for still. The name follows the current UI language. Exporting still is one pose, not the GIF turntable.
+- 导出内置动作（行走、跑步等）时，关节是按站立姿势烘焙出来的，不是按你现在的滑块。33 帧（静止是 1 帧）。名字跟当前界面语言走。导出「静止」只是一个姿势，不是 GIF 里那种转一圈。再导入时就是上面那种绝对关键帧数据，不是原来的公式。Exporting a built-in clip (walk, run, and the others) bakes joints from the idle pose, not from your sliders. That is 33 frames, or 1 frame for still. The name follows the current UI language. Exporting still is one pose, not the GIF turntable. Re-importing it gives the absolute keyframe data above, not the live formula.
 - 画面上的跑步会把髋甩到 ±72°，滑块上限是 70。导出的 JSON 会收到 70，再导入时峰值会少大约 2°。The on-screen run swings the hips to ±72°. The slider max is 70, so the exported JSON is clamped to 70 and a re-import peaks about 2° lower.
 - 整段文字超过 512KB 会在解析前被拒绝。Text over 512KB is rejected before it is parsed.
 
