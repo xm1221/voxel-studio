@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { clipExportSpanForPlayers } from "../lib/motion.ts";
+import { clipExportSpanForPlayers, parseAnimationDocument } from "../lib/motion.ts";
 import { poseById } from "../lib/poses.ts";
 import {
   backgroundImageFrom,
@@ -146,6 +146,41 @@ describe("pose url serialization", () => {
     assert.equal(decoded.backgroundFit, "contain");
     assert.equal(backgroundImageFrom(decoded.backgroundImage), image);
     assert.equal(backgroundImageFrom("https://example.com/bg.jpg"), null);
+  });
+
+  it("round-trips a custom animation and drops an invalid one", () => {
+    const draft = scene();
+    const parsed = parseAnimationDocument({
+      v: 1,
+      name: "Wave",
+      duration: 1.6,
+      loop: true,
+      keyframes: [
+        { time: 0, joints: { rArmZ: -20 } },
+        { time: 1.6, joints: { rArmZ: -150 }, cape: 6 },
+      ],
+    });
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+    draft.players[0].clip = "custom";
+    draft.players[0].customAnimation = parsed.animation;
+
+    const decoded = decodePayload(encodePayload(toPayload(draft, undefined, false)));
+    assert.ok(decoded);
+    const restored = playerSettingsFromPayload(decoded.players[0], decoded);
+    assert.equal(restored.clip, "custom");
+    assert.deepEqual(restored.customAnimation, parsed.animation);
+
+    decoded.players[0].customAnimation = { v: 2, name: "nope" } as typeof parsed.animation;
+    const broken = playerSettingsFromPayload(decoded.players[0], decoded);
+    assert.equal(broken.clip, "none");
+    assert.equal(broken.customAnimation, null);
+
+    delete decoded.players[0].customAnimation;
+    decoded.players[0].clip = "wave";
+    const legacy = playerSettingsFromPayload(decoded.players[0], decoded);
+    assert.equal(legacy.clip, "wave");
+    assert.equal(legacy.customAnimation, null);
   });
 
   it("uses the slowest player when calculating a shared GIF span", () => {

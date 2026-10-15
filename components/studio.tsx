@@ -5,7 +5,7 @@ import { createAlexSkin, createSteveSkin } from "@/lib/defaults";
 import { StudioEngine } from "@/lib/engine";
 import { LOCALE_STORAGE_KEY, code, errorNote, htmlLang, note, parseNote, readLocale, t, type Locale, type MessageKey, type Note } from "@/lib/i18n";
 import { FORMATS, formatById, gifFrameSize } from "@/lib/formats";
-import { animationDocument, animationForClip, CLIPS, clipExportSpanForPlayers, parseAnimationDocument } from "@/lib/motion";
+import { animationDocument, animationDownloadName, animationForClip, CLIPS, clipExportSpanForPlayers, MAX_ANIMATION_TEXT_LENGTH, parseAnimationText } from "@/lib/motion";
 import { backgroundImageFrom, decodePayload, encodePayload, toPayload } from "@/lib/persist";
 import { POSES } from "@/lib/poses";
 import { PRESET_STORAGE_KEY, mergePresets, newPresetId, parsePresetDocument, presetDocument, type UserPreset } from "@/lib/presets";
@@ -305,14 +305,7 @@ export function Studio() {
   }
 
   function importAnimationText(text: string) {
-    let value: unknown;
-    try {
-      value = JSON.parse(text) as unknown;
-    } catch {
-      setError(note("err.animJson"));
-      return;
-    }
-    const parsed = parseAnimationDocument(value);
+    const parsed = parseAnimationText(text);
     if (!parsed.ok) {
       setError(parseNote(parsed.error) ?? note("err.animJson"));
       return;
@@ -324,15 +317,15 @@ export function Studio() {
 
   function exportAnimation() {
     if (!active) return;
-    const animation = active.clip === "custom" && active.customAnimation
-      ? active.customAnimation
-      : animationForClip(active.clip === "custom" ? "none" : active.clip);
+    const builtin = active.clip === "custom" ? "none" : active.clip;
+    const source = active.clip === "custom" && active.customAnimation ? active.customAnimation : animationForClip(builtin);
+    const name = active.clip === "custom" && active.customAnimation ? source.name : ui(locale, `clip.${builtin}`);
+    const animation = { ...source, name };
     const blob = new Blob([JSON.stringify(animationDocument(animation), null, 2)], { type: "application/json" });
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
-    const name = animation.name.toLowerCase().replace(/[^a-z0-9_-]+/gi, "-") || "animation";
     link.href = url;
-    link.download = `pixelstage-${name}.json`;
+    link.download = animationDownloadName(animation.name);
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -978,6 +971,7 @@ export function Studio() {
                     type="button"
                     className={active.clip === "custom" ? "pose active" : "pose"}
                     disabled={!active.customAnimation}
+                    title={active.customAnimation?.name || tr("customAnimation")}
                     onClick={() => updateActive({ clip: "custom" })}
                   >
                     {active.customAnimation?.name || tr("customAnimation")}
@@ -1013,7 +1007,7 @@ export function Studio() {
                       className="preset-json"
                       value={animationJson}
                       aria-label={tr("animationJson")}
-                      placeholder='{"v":1,"name":"Wave","duration":1.6,"loop":true,"keyframes":[]}'
+                      placeholder='{"v":1,"name":"Wave","duration":1.6,"loop":true,"keyframes":[{"time":0,"joints":{"rArmZ":-20}}]}'
                       onChange={(event) => setAnimationJson(event.target.value)}
                     />
                   </label>
@@ -1032,6 +1026,10 @@ export function Studio() {
                       const file = event.target.files?.[0];
                       event.target.value = "";
                       if (!file) return;
+                      if (file.size > MAX_ANIMATION_TEXT_LENGTH) {
+                        setError(note("err.animSize"));
+                        return;
+                      }
                       void file.text().then((text) => importAnimationText(text)).catch(() => setError(note("err.animFile")));
                     }}
                   />

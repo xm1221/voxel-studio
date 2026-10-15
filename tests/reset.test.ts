@@ -18,7 +18,13 @@ function player(): PlayerDraft {
     joints: { ...poseById("sit").joints },
     clip: "run",
     clipSpeed: 1.45,
-    customAnimation: null,
+    customAnimation: {
+      v: 1,
+      name: "Wave",
+      duration: 1.6,
+      loop: true,
+      keyframes: [{ time: 0, joints: { rArmZ: -20 }, bob: 0, sway: 0, roll: 0, cape: 0 }],
+    },
     showOuter: false,
     layerMode: "voxel",
     position: { x: 4, y: 2, z: -3 },
@@ -46,6 +52,7 @@ describe("reset to default", () => {
     assert.equal(next.showOuter, false);
     assert.equal(next.layerMode, "voxel");
     assert.equal(next.showCape, false);
+    assert.equal(next.customAnimation, null);
     assert.notEqual(next.joints, poseById("idle").joints);
   });
 

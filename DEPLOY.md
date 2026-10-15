@@ -37,12 +37,25 @@ npm run preview:cf
 npm run deploy:cf
 ```
 
-`main` 分支收到 push 后，GitHub Actions 会运行 [`.github/workflows/deploy-main.yml`](.github/workflows/deploy-main.yml)，执行 `npm ci` 和 `npm run deploy:cf` 自动发布。仓库需要在 GitHub Actions secrets 中配置：
+`main` 收到 push，或在 Actions 里手动跑 `workflow_dispatch` 时，[`.github/workflows/deploy-main.yml`](.github/workflows/deploy-main.yml) 会用 Node 22 执行 `npm ci` 和 `npm run deploy:cf`。workflow 里写了 `NEXT_PUBLIC_BASE_PATH=/mcrender`，和 `deploy:cf` 脚本一致。Worker 名称仍是 `wrangler.jsonc` 里的 `pixelstage`，workflow 不会改它。
 
-- `CLOUDFLARE_API_TOKEN`：允许部署 Worker `pixelstage`
-- `CLOUDFLARE_ACCOUNT_ID`：Worker 所在账号的 ID
+需要人手设置的 GitHub Actions secret 只有一个：
 
-`wrangler.jsonc` 里的 Worker 名称是 `pixelstage`。在 Cloudflare 上把 `tools.xm1221.cn/mcrender*` 指到这个 Worker。如果这台域名上已经有别的 Worker，用路由只匹配 `/mcrender` 开头的路径，不要抢走整站。
+- `CLOUDFLARE_API_TOKEN`：能部署 Worker `pixelstage` 的 API token。不要写进仓库，也不要打进日志。
+
+`CLOUDFLARE_ACCOUNT_ID` 不是 secret，写在 workflow 里：`ab2343f4691dfe98689e375fc23d4121`。
+
+Pushes to `main`, and a manual `workflow_dispatch` run, use [`.github/workflows/deploy-main.yml`](.github/workflows/deploy-main.yml): Node 22, `npm ci`, then `npm run deploy:cf`. The workflow sets `NEXT_PUBLIC_BASE_PATH=/mcrender` the same way the `deploy:cf` script does. The Worker name stays `pixelstage` from `wrangler.jsonc`.
+
+The only GitHub Actions secret to set by hand is:
+
+- `CLOUDFLARE_API_TOKEN`: an API token that can deploy the `pixelstage` Worker. Do not commit it or print it.
+
+`CLOUDFLARE_ACCOUNT_ID` is not a secret. The workflow sets it to `ab2343f4691dfe98689e375fc23d4121`.
+
+在 Cloudflare 上把 `tools.xm1221.cn/mcrender*` 指到这个 Worker。如果这台域名上已经有别的 Worker，用路由只匹配 `/mcrender` 开头的路径，不要抢走整站。
+
+On Cloudflare, route `tools.xm1221.cn/mcrender*` to this Worker. If another Worker already serves the hostname, match only paths that start with `/mcrender`.
 
 ## 玩家名查询的缓存
 
