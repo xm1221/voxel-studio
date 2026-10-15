@@ -142,6 +142,7 @@ export function resetPlayer(player: PlayerDraft): PlayerDraft {
     joints: { ...poseById("idle").joints },
     clip: "idle",
     clipSpeed: 1,
+    customAnimation: null,
     position: { x: 0, y: 0, z: 0 },
     scale: 1,
     nametag: "",

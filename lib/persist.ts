@@ -1,10 +1,11 @@
-import type { BackgroundFit, CameraSnapshot, ClipId, Joints, LayerMode, PlayerDraft, SceneDraft } from "./types";
+import { animationDocument, parseAnimationDocument } from "./motion.ts";
+import type { AnimationDef, BackgroundFit, CameraSnapshot, ClipId, Joints, LayerMode, PlayerDraft, SceneDraft } from "./types";
 
 export function layerModeFrom(value: unknown): LayerMode {
   return value === "voxel" ? "voxel" : "flat";
 }
 
-const CLIP_IDS = new Set<ClipId>(["none", "idle", "walk", "run", "wave", "cheer"]);
+const CLIP_IDS = new Set<ClipId>(["none", "idle", "walk", "run", "wave", "cheer", "custom"]);
 
 export function clipIdFrom(value: unknown, fallback: ClipId): ClipId {
   return typeof value === "string" && CLIP_IDS.has(value as ClipId) ? (value as ClipId) : fallback;
@@ -38,12 +39,13 @@ export type SharePayload = {
 
 export type PlayerPayload = Omit<
   PlayerDraft,
-  "skinUrl" | "capeUrl" | "clip" | "clipSpeed" | "showOuter" | "layerMode" | "position" | "scale"
+  "skinUrl" | "capeUrl" | "clip" | "clipSpeed" | "customAnimation" | "showOuter" | "layerMode" | "position" | "scale"
 > & {
   skinUrl?: string;
   capeUrl?: string | null;
   clip?: ClipId;
   clipSpeed?: number;
+  customAnimation?: AnimationDef | null;
   showOuter?: boolean;
   layerMode?: LayerMode;
   position?: Partial<PlayerDraft["position"]>;
@@ -54,12 +56,21 @@ export function playerSettingsFromPayload(
   player: PlayerPayload,
   payload: Pick<SharePayload, "clip" | "clipSpeed" | "showOuter" | "layerMode">,
 ) {
+  const customAnimation = parseCustomAnimation(player.customAnimation);
+  const requestedClip = clipIdFrom(player.clip, clipIdFrom(payload.clip, "none"));
   return {
-    clip: clipIdFrom(player.clip, clipIdFrom(payload.clip, "none")),
+    clip: requestedClip === "custom" && !customAnimation ? "none" : requestedClip,
     clipSpeed: numberInRange(player.clipSpeed, 0.25, 3, numberInRange(payload.clipSpeed, 0.25, 3, 1)),
+    customAnimation,
     showOuter: player.showOuter ?? payload.showOuter ?? true,
     layerMode: layerModeFrom(player.layerMode ?? payload.layerMode),
   };
+}
+
+function parseCustomAnimation(value: unknown): AnimationDef | null {
+  if (value === undefined || value === null) return null;
+  const parsed = parseAnimationDocument(value);
+  return parsed.ok ? parsed.animation : null;
 }
 
 const JOINT_KEYS: (keyof Joints)[] = [
@@ -116,6 +127,7 @@ export function toPayload(scene: SceneDraft, camera: CameraSnapshot | undefined,
       joints: player.joints,
       clip: player.clip,
       clipSpeed: player.clipSpeed,
+      customAnimation: player.customAnimation ? animationDocument(player.customAnimation) : null,
       showOuter: player.showOuter,
       layerMode: player.layerMode,
       position: { ...player.position },

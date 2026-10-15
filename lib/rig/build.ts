@@ -20,7 +20,7 @@ import {
   type Material,
   type Texture,
 } from "three";
-import type { Joints, ModelType, PlayerDraft } from "../types";
+import type { AnimationDef, Joints, ModelType, PlayerDraft } from "../types";
 import { createBentBox, deformBend } from "./bend";
 import { ARM, LEG, SIT_DROP, isSitting } from "./layout";
 import type { BendJoint } from "./layers";
@@ -94,6 +94,7 @@ export type Rig = {
   lastBubble: string;
   clipTime: number;
   lastClip: string;
+  lastAnimation: AnimationDef | null;
 };
 
 function cutout(factor: number, units: number) {
@@ -437,6 +438,7 @@ export function buildRig(model: ModelType, gradient: Texture): Rig {
     lastBubble: "",
     clipTime: 0,
     lastClip: "",
+    lastAnimation: null,
   };
 }
 

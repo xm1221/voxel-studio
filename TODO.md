@@ -4,8 +4,6 @@
 
 Not shipped. Do not describe these as part of the current product.
 
-- 自定义关键帧动画的 JSON 导入 / 导出。现有的「我的姿势」只保存一帧关节，不是时间轴。
-  - Custom keyframe animation JSON import/export. Saved poses are a single joint frame, not a timeline.
 - 导出 MP4。现在只有 PNG 和 GIF。
   - MP4 export. PNG and GIF are what ship today.
 - 把 Minecraft 物品、方块、实体当作道具放进场景。
