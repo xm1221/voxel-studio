@@ -14,7 +14,7 @@ import {
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { captureClip, captureStill } from "./capture";
 import { drawBubble, drawTag } from "./labels";
-import { phaseOffset, sampleClip } from "./motion";
+import { motionPhaseOffset, sampleMotion } from "./motion";
 import { applyJoints, buildRig, configureTexture, type Rig } from "./rig/build";
 import { voxelPieces, type VoxelParent } from "./rig/layers";
 import { applyLook } from "./rig/look";
@@ -253,15 +253,16 @@ export class StudioEngine {
     draft.players.forEach((player, index) => {
       const rig = this.rigs.get(player.id);
       if (!rig) return;
-      const clipChanged = rig.lastClip !== player.clip;
+      const clipChanged = rig.lastClip !== player.clip || rig.lastAnimation !== player.customAnimation;
       if (clipChanged) {
         rig.lastClip = player.clip;
+        rig.lastAnimation = player.customAnimation;
         rig.clipTime = 0;
       }
       const speed = Number.isFinite(player.clipSpeed) && player.clipSpeed > 0 ? player.clipSpeed : 1;
       if (exactTime === undefined && player.clip !== "none") rig.clipTime += dt * speed;
       const time = exactTime === undefined ? rig.clipTime : exactTime * speed;
-      const sampled = sampleClip(player.clip, time + phaseOffset(index, player.clip), player.joints);
+      const sampled = sampleMotion(player, time + motionPhaseOffset(index, player), player.joints);
       let shown = this.shown.get(player.id);
       if (!shown || exactTime !== undefined || clipChanged) {
         shown = { joints: { ...sampled.joints }, bob: sampled.bob, sway: sampled.sway, roll: sampled.roll, cape: sampled.cape, ready: true };

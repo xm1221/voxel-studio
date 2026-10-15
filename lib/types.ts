@@ -31,6 +31,8 @@ export type PlayerDraft = {
   joints: Joints;
   clip: ClipId;
   clipSpeed: number;
+  /** Imported keyframe animation. Built-in clips stay in `clip`. */
+  customAnimation: AnimationDef | null;
   showOuter: boolean;
   layerMode: LayerMode;
   position: {
@@ -48,8 +50,28 @@ export type BackgroundFit = "cover" | "contain";
 export type GradeId = "clean" | "hologram" | "ice" | "comic";
 export type OutlineId = "none" | "ink" | "sticker";
 export type LightId = "soft" | "hard" | "neon" | "moon";
-export type ClipId = "none" | "idle" | "walk" | "run" | "wave" | "cheer";
+export type BuiltinClipId = "none" | "idle" | "walk" | "run" | "wave" | "cheer";
+export type ClipId = BuiltinClipId | "custom";
 export type LayerMode = "flat" | "voxel";
+
+export type AnimationKeyframe = {
+  time: number;
+  /** Missing joints fall back to the player's current pose when sampled. */
+  joints: Partial<Joints>;
+  bob: number;
+  sway: number;
+  roll: number;
+  cape: number;
+};
+
+/** Versioned keyframe animation format used by imports, exports, and share links. */
+export type AnimationDef = {
+  v: 1;
+  name: string;
+  duration: number;
+  loop: boolean;
+  keyframes: AnimationKeyframe[];
+};
 
 export type SceneDraft = {
   players: PlayerDraft[];

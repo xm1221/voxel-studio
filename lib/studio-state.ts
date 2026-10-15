@@ -24,6 +24,7 @@ export function makePlayer(partial: Partial<PlayerDraft> & Pick<PlayerDraft, "na
     joints: poseById("idle").joints,
     clip: "idle",
     clipSpeed: 1,
+    customAnimation: null,
     showOuter: true,
     layerMode: "flat",
     position: { x: 0, y: 0, z: 0 },

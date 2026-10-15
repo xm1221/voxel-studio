@@ -31,6 +31,7 @@ function scene(): SceneDraft {
         joints,
         clip: "wave",
         clipSpeed: 1.45,
+        customAnimation: null,
         showOuter: true,
         layerMode: "flat",
         position: { x: 4, y: 1, z: -3 },

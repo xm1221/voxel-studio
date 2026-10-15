@@ -18,6 +18,7 @@ function player(): PlayerDraft {
     joints: { ...poseById("sit").joints },
     clip: "run",
     clipSpeed: 1.45,
+    customAnimation: null,
     showOuter: false,
     layerMode: "voxel",
     position: { x: 4, y: 2, z: -3 },

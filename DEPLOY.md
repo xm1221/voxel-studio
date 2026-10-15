@@ -37,7 +37,12 @@ npm run preview:cf
 npm run deploy:cf
 ```
 
-本仓库不包含自动发布。`wrangler.jsonc` 里的 Worker 名称是 `pixelstage`。在 Cloudflare 上把 `tools.xm1221.cn/mcrender*` 指到这个 Worker。如果这台域名上已经有别的 Worker，用路由只匹配 `/mcrender` 开头的路径，不要抢走整站。
+`main` 分支收到 push 后，GitHub Actions 会运行 [`.github/workflows/deploy-main.yml`](.github/workflows/deploy-main.yml)，执行 `npm ci` 和 `npm run deploy:cf` 自动发布。仓库需要在 GitHub Actions secrets 中配置：
+
+- `CLOUDFLARE_API_TOKEN`：允许部署 Worker `pixelstage`
+- `CLOUDFLARE_ACCOUNT_ID`：Worker 所在账号的 ID
+
+`wrangler.jsonc` 里的 Worker 名称是 `pixelstage`。在 Cloudflare 上把 `tools.xm1221.cn/mcrender*` 指到这个 Worker。如果这台域名上已经有别的 Worker，用路由只匹配 `/mcrender` 开头的路径，不要抢走整站。
 
 ## 玩家名查询的缓存
 

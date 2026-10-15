@@ -5,7 +5,7 @@ import { createAlexSkin, createSteveSkin } from "@/lib/defaults";
 import { StudioEngine } from "@/lib/engine";
 import { LOCALE_STORAGE_KEY, code, errorNote, htmlLang, note, parseNote, readLocale, t, type Locale, type MessageKey, type Note } from "@/lib/i18n";
 import { FORMATS, formatById, gifFrameSize } from "@/lib/formats";
-import { CLIPS, clipExportSpanForPlayers } from "@/lib/motion";
+import { animationDocument, animationForClip, CLIPS, clipExportSpanForPlayers, parseAnimationDocument } from "@/lib/motion";
 import { backgroundImageFrom, decodePayload, encodePayload, toPayload } from "@/lib/persist";
 import { POSES } from "@/lib/poses";
 import { PRESET_STORAGE_KEY, mergePresets, newPresetId, parsePresetDocument, presetDocument, type UserPreset } from "@/lib/presets";
@@ -62,6 +62,7 @@ export function Studio() {
   const fileRef = useRef<HTMLInputElement>(null);
   const backgroundFileRef = useRef<HTMLInputElement>(null);
   const presetFileRef = useRef<HTMLInputElement>(null);
+  const animationFileRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [locale, setLocale] = useState<Locale>(() => readLocale());
   const [message, setMessage] = useState<Note | null>(null);
@@ -85,6 +86,7 @@ export function Studio() {
   const [presetName, setPresetName] = useState("");
   const [keepLook, setKeepLook] = useState(false);
   const [presetJson, setPresetJson] = useState("");
+  const [animationJson, setAnimationJson] = useState("");
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
@@ -300,6 +302,39 @@ export function Studio() {
     writePresets(merged.presets);
     setPresetJson("");
     setMessage(note("importedPoses", { count: parsed.presets.length }));
+  }
+
+  function importAnimationText(text: string) {
+    let value: unknown;
+    try {
+      value = JSON.parse(text) as unknown;
+    } catch {
+      setError(note("err.animJson"));
+      return;
+    }
+    const parsed = parseAnimationDocument(value);
+    if (!parsed.ok) {
+      setError(parseNote(parsed.error) ?? note("err.animJson"));
+      return;
+    }
+    updateActive({ clip: "custom", customAnimation: parsed.animation });
+    setAnimationJson("");
+    setMessage(note("animImported", { name: parsed.animation.name }));
+  }
+
+  function exportAnimation() {
+    if (!active) return;
+    const animation = active.clip === "custom" && active.customAnimation
+      ? active.customAnimation
+      : animationForClip(active.clip === "custom" ? "none" : active.clip);
+    const blob = new Blob([JSON.stringify(animationDocument(animation), null, 2)], { type: "application/json" });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    const name = animation.name.toLowerCase().replace(/[^a-z0-9_-]+/gi, "-") || "animation";
+    link.href = url;
+    link.download = `pixelstage-${name}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
   }
 
   function resetActivePlayer() {
@@ -939,6 +974,14 @@ export function Studio() {
                       {ui(locale, `clip.${clip.id}`)}
                     </button>
                   ))}
+                  <button
+                    type="button"
+                    className={active.clip === "custom" ? "pose active" : "pose"}
+                    disabled={!active.customAnimation}
+                    onClick={() => updateActive({ clip: "custom" })}
+                  >
+                    {active.customAnimation?.name || tr("customAnimation")}
+                  </button>
                 </div>
                 <div className="row" style={{ marginTop: 8 }}>
                   {SPEEDS.map(([speed, label]) => (
@@ -954,6 +997,44 @@ export function Studio() {
                   <button className="btn" type="button" disabled={busy} onClick={() => void downloadGif()}>
                     {tr("exportGif")}
                   </button>
+                </div>
+                <div className="preset-tools">
+                  <div className="row">
+                    <button className="btn" type="button" onClick={exportAnimation}>
+                      {tr("exportAnimation")}
+                    </button>
+                    <button className="btn ghost" type="button" onClick={() => animationFileRef.current?.click()}>
+                      {tr("importAnimation")}
+                    </button>
+                  </div>
+                  <label className="field">
+                    <span>{tr("animationJson")}</span>
+                    <textarea
+                      className="preset-json"
+                      value={animationJson}
+                      aria-label={tr("animationJson")}
+                      placeholder='{"v":1,"name":"Wave","duration":1.6,"loop":true,"keyframes":[]}'
+                      onChange={(event) => setAnimationJson(event.target.value)}
+                    />
+                  </label>
+                  <div className="row">
+                    <button className="btn" type="button" disabled={!animationJson.trim()} onClick={() => importAnimationText(animationJson)}>
+                      {tr("pasteImport")}
+                    </button>
+                  </div>
+                  <input
+                    ref={animationFileRef}
+                    type="file"
+                    accept="application/json,.json"
+                    hidden
+                    aria-label={tr("importAnimation")}
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      event.target.value = "";
+                      if (!file) return;
+                      void file.text().then((text) => importAnimationText(text)).catch(() => setError(note("err.animFile")));
+                    }}
+                  />
                 </div>
               </section>
 
