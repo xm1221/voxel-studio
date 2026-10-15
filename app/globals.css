@@ -359,6 +359,10 @@ button {
   border-radius: 12px;
   padding: 8px 6px;
   font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pose.active,

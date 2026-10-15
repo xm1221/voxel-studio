@@ -27,6 +27,8 @@ const NEUTRAL_JOINTS = poseById("idle").joints;
 const MAX_ANIMATION_FRAMES = 240;
 const MIN_ANIMATION_DURATION = 0.2;
 const MAX_ANIMATION_DURATION = 30;
+/** A valid 240-frame document fits under this. Larger text is rejected before JSON.parse. */
+export const MAX_ANIMATION_TEXT_LENGTH = 512 * 1024;
 const SCALAR_LIMITS = {
   bob: { min: -8, max: 8 },
   sway: { min: -5, max: 5 },
@@ -193,15 +195,24 @@ function cloneAnimation(animation: AnimationDef): AnimationDef {
   };
 }
 
+function clamp(value: number, min: number, max: number) {
+  const next = Math.min(max, Math.max(min, value));
+  return next === 0 ? 0 : next;
+}
+
 function frameFromSample(clip: BuiltinClipId, time: number): AnimationKeyframe {
   const sampled = sampleClip(clip, time, NEUTRAL_JOINTS);
+  const joints: Partial<Joints> = {};
+  for (const key of Object.keys(JOINT_LIMITS) as (keyof Joints)[]) {
+    joints[key] = clamp(sampled.joints[key], JOINT_LIMITS[key].min, JOINT_LIMITS[key].max);
+  }
   return {
     time,
-    joints: { ...sampled.joints },
-    bob: sampled.bob,
-    sway: sampled.sway,
-    roll: sampled.roll,
-    cape: sampled.cape,
+    joints,
+    bob: clamp(sampled.bob, SCALAR_LIMITS.bob.min, SCALAR_LIMITS.bob.max),
+    sway: clamp(sampled.sway, SCALAR_LIMITS.sway.min, SCALAR_LIMITS.sway.max),
+    roll: clamp(sampled.roll, SCALAR_LIMITS.roll.min, SCALAR_LIMITS.roll.max),
+    cape: clamp(sampled.cape, SCALAR_LIMITS.cape.min, SCALAR_LIMITS.cape.max),
   };
 }
 
@@ -239,6 +250,23 @@ export function animationForClip(clip: BuiltinClipId): AnimationDef {
 
 export function animationDocument(animation: AnimationDef): AnimationDef {
   return cloneAnimation(animation);
+}
+
+/** Download name for an animation. Non-ASCII names fall back to `animation`. */
+export function animationDownloadName(name: string) {
+  const slug = name.toLowerCase().replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "");
+  return `pixelstage-${slug || "animation"}.json`;
+}
+
+export function parseAnimationText(text: string): { ok: true; animation: AnimationDef } | { ok: false; error: string } {
+  if (text.length > MAX_ANIMATION_TEXT_LENGTH) return { ok: false, error: code("err.animSize") };
+  let value: unknown;
+  try {
+    value = JSON.parse(text) as unknown;
+  } catch {
+    return { ok: false, error: code("err.animJson") };
+  }
+  return parseAnimationDocument(value);
 }
 
 export function parseAnimationDocument(value: unknown): { ok: true; animation: AnimationDef } | { ok: false; error: string } {
@@ -335,7 +363,7 @@ function parseAnimationJoints(
   if (!isRecord(value)) return { ok: false, error: code("err.animFrame", { n }) };
   const joints: Partial<Joints> = {};
   for (const [key, raw] of Object.entries(value)) {
-    if (!(key in JOINT_LIMITS)) return { ok: false, error: code("err.animUnknown") };
+    if (!Object.prototype.hasOwnProperty.call(JOINT_LIMITS, key)) return { ok: false, error: code("err.animUnknown") };
     const limit = JOINT_LIMITS[key as keyof Joints];
     if (typeof raw !== "number" || !Number.isFinite(raw) || raw < limit.min || raw > limit.max) {
       return { ok: false, error: code("err.animJoints", { n }) };
