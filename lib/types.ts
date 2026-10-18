@@ -73,9 +73,27 @@ export type AnimationDef = {
   keyframes: AnimationKeyframe[];
 };
 
+export type PropKind = "block" | "item" | "entity";
+
+export type SceneProp = {
+  id: string;
+  catalogId: string;
+  position: {
+    x: number;
+    y: number;
+    z: number;
+  };
+  /** Degrees around Y. */
+  rotationY: number;
+  scale: number;
+};
+
 export type SceneDraft = {
   players: PlayerDraft[];
   activeId: string;
+  /** Blocks, items, and simple entities standing with the skins. */
+  props: SceneProp[];
+  activePropId: string | null;
   background: BackgroundId;
   /** Data URL kept on this browser. Share links omit it. */
   backgroundImage: string | null;

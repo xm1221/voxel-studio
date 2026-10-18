@@ -69,6 +69,8 @@ describe("reset to default", () => {
       light: "neon",
       keyIntensity: 1.5,
       formatId: "avatar",
+      props: [],
+      activePropId: null,
     };
     const next = resetSceneLook(scene);
     assert.equal(next.background, "studio");
