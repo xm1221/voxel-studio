@@ -6,6 +6,8 @@ import { describe, it } from "node:test";
 import { main } from "../cli/pixelstage.ts";
 import { projectErrors } from "../lib/project-edit.ts";
 
+const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+
 const dir = mkdtempSync(join(tmpdir(), "pixelstage-cli-"));
 const project = join(dir, "stage.json");
 
@@ -43,5 +45,26 @@ describe("pixelstage cli", () => {
       process.stdout.write = write;
     }
     assert.match(lines.join(""), /stone/);
+  });
+
+  it("adds a PNG skin and keys an arm joint", async () => {
+    const skin = join(dir, "skin.png");
+    writeFileSync(skin, PNG);
+    assert.equal(await main(["add", project, "--skin", skin, "--name", "Alex", "--slim"]), 0);
+    const saved = JSON.parse(readFileSync(project, "utf8")) as {
+      scene: { players: Array<{ name: string; model: string; source: string; skinUrl?: string; customAnimation?: { keyframes: Array<{ joints: { rArmZ?: number } }> } | null }> };
+    };
+    const alex = saved.scene.players.find((player) => player.name === "Alex");
+    assert.equal(alex?.model, "slim");
+    assert.equal(alex?.source, "upload");
+    assert.match(alex?.skinUrl ?? "", /^data:image\/png;base64,/);
+    assert.equal(await main(["keyframe", project, "--player", saved.scene.players[0].id ?? "", "--time", "0.8", "--joint", "rArmZ=-140"]), 0);
+    const keyed = JSON.parse(readFileSync(project, "utf8")) as {
+      scene: { players: Array<{ id: string; clip?: string; customAnimation?: { keyframes: Array<{ time: number; joints: { rArmZ?: number } }> } | null }> };
+    };
+    const active = keyed.scene.players[0];
+    assert.equal(active.clip, "custom");
+    const frame = active.customAnimation?.keyframes.find((item) => item.time === 0.8);
+    assert.equal(frame?.joints.rArmZ, -140);
   });
 });

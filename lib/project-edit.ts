@@ -3,8 +3,9 @@ import { customFromPng, isPngDataUrl, parseCustomFile, type CustomAsset } from "
 import { exportProject, parseProject, type ProjectFile } from "./project.ts";
 import { emptyPropClip, parsePropClip, writePropKey, type PropChannels, type PropClip } from "./prop-clip.ts";
 import { isCatalogId, placeProp } from "./props.ts";
-import { defaultScene, sceneFromPayload } from "./studio-state.ts";
-import type { SceneDraft } from "./types.ts";
+import { defaultScene, makePlayer, sceneFromPayload } from "./studio-state.ts";
+import { addKeyframe, animationFromPose, setDuration, writeJoint, writeScalar, type ScalarKey } from "./timeline.ts";
+import type { CameraSnapshot, Joints, ModelType, SceneDraft } from "./types.ts";
 
 export function blankProject(): ProjectFile {
   return exportProject(defaultScene(""), undefined, []);
@@ -125,6 +126,112 @@ export function replacePropClip(project: ProjectFile, clip: PropClip): { project
   const opened = openProject(project);
   if ("error" in opened) return opened;
   opened.scene.propClip = clip;
+  return { project: withScene(opened.scene, opened.project.customs, opened.project.scene.camera) };
+}
+
+const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47];
+
+export function pngDataUrl(bytes: Uint8Array) {
+  if (bytes.byteLength < 8 || bytes.byteLength > 2_500_000 || PNG_MAGIC.some((byte, index) => bytes[index] !== byte)) {
+    throw new Error("expected a PNG file");
+  }
+  const data = `data:image/png;base64,${Buffer.from(bytes).toString("base64")}`;
+  if (!isPngDataUrl(data)) throw new Error("expected a PNG file");
+  return data;
+}
+
+/** Store the skin bytes in the project so a headless render does not need another lookup. */
+export function addSkinPlayer(
+  project: ProjectFile,
+  options: { name: string; model?: ModelType; skin: string; cape?: string | null },
+): { project: ProjectFile; playerId: string } | { error: string } {
+  const opened = openProject(project);
+  if ("error" in opened) return opened;
+  if (opened.scene.players.length >= 4) return { error: "the stage already has 4 players" };
+  if (!isPngDataUrl(options.skin)) return { error: "skin must be a PNG data URL" };
+  if (options.cape && !isPngDataUrl(options.cape)) return { error: "cape must be a PNG data URL" };
+  const name = options.name.trim().slice(0, 16) || "Player";
+  const player = makePlayer({
+    name,
+    skinUrl: options.skin,
+    model: options.model === "slim" ? "slim" : "default",
+    source: "upload",
+    capeUrl: options.cape ?? null,
+  });
+  opened.scene.players = [...opened.scene.players, player];
+  opened.scene.activeId = player.id;
+  return { project: withScene(opened.scene, opened.project.customs, opened.project.scene.camera), playerId: player.id };
+}
+
+export function parseCamera(text: string): CameraSnapshot | { error: string } {
+  const parts = text.split(",").map((part) => Number(part.trim()));
+  if (parts.length !== 6 || parts.some((value) => !Number.isFinite(value))) return { error: "camera needs px,py,pz,tx,ty,tz" };
+  const [px, py, pz, tx, ty, tz] = parts;
+  return { p: [px, py, pz], t: [tx, ty, tz] };
+}
+
+export function withCamera(project: ProjectFile, camera: CameraSnapshot): { project: ProjectFile } | { error: string } {
+  const opened = openProject(project);
+  if ("error" in opened) return opened;
+  return { project: withScene(opened.scene, opened.project.customs, camera) };
+}
+
+const JOINT_NAMES = new Set<keyof Joints>(["headX", "headY", "bodyX", "rArmX", "rArmZ", "rElbow", "lArmX", "lArmZ", "lElbow", "rLegX", "rKnee", "lLegX", "lKnee"]);
+const SCALAR_NAMES = new Set<ScalarKey>(["bob", "sway", "roll", "cape"]);
+
+export function parseJointList(text: string): { joints: Partial<Joints>; scalars: Partial<Record<ScalarKey, number>> } | { error: string } {
+  const joints: Partial<Joints> = {};
+  const scalars: Partial<Record<ScalarKey, number>> = {};
+  for (const piece of text.split(",").map((part) => part.trim()).filter(Boolean)) {
+    const [name, raw] = piece.split("=");
+    const value = Number(raw);
+    if (!name || !Number.isFinite(value)) return { error: `bad joint ${piece}` };
+    if (JOINT_NAMES.has(name as keyof Joints)) joints[name as keyof Joints] = value;
+    else if (SCALAR_NAMES.has(name as ScalarKey)) scalars[name as ScalarKey] = value;
+    else return { error: `unknown channel ${name}` };
+  }
+  if (!Object.keys(joints).length && !Object.keys(scalars).length) return { error: "joint list is empty" };
+  return { joints, scalars };
+}
+
+/** Write one pose key on the active player's custom clip. */
+export function writeJointKeyframe(
+  project: ProjectFile,
+  playerId: string | undefined,
+  time: number,
+  joints: Partial<Joints>,
+  scalars: Partial<Record<ScalarKey, number>> = {},
+): { project: ProjectFile } | { error: string } {
+  const opened = openProject(project);
+  if ("error" in opened) return opened;
+  const player = opened.scene.players.find((item) => item.id === (playerId || opened.scene.activeId));
+  if (!player) return { error: "no player" };
+  if (!Number.isFinite(time)) return { error: "time must be a number" };
+  let animation = player.customAnimation ?? animationFromPose(player.name || "Clip", player.joints, Math.max(1.6, time));
+  if (time > animation.duration) {
+    const stretched = setDuration(animation, Math.min(30, time));
+    if (!stretched.ok) return { error: stretched.error };
+    animation = stretched.animation;
+  }
+  let index = animation.keyframes.findIndex((frame) => Math.abs(frame.time - time) < 0.02);
+  if (index < 0) {
+    const added = addKeyframe(animation, time, {});
+    if (!added.ok) return { error: added.error };
+    animation = added.animation;
+    index = added.index;
+  }
+  for (const [key, value] of Object.entries(joints) as Array<[keyof Joints, number]>) {
+    const written = writeJoint(animation, index, key, value);
+    if (!written.ok) return { error: written.error };
+    animation = written.animation;
+  }
+  for (const [key, value] of Object.entries(scalars) as Array<[ScalarKey, number]>) {
+    const written = writeScalar(animation, index, key, value);
+    if (!written.ok) return { error: written.error };
+    animation = written.animation;
+  }
+  player.customAnimation = animation;
+  player.clip = "custom";
   return { project: withScene(opened.scene, opened.project.customs, opened.project.scene.camera) };
 }
 

@@ -37,10 +37,12 @@ export default function RenderPage() {
         const textures = Object.assign({}, ...parsed.customs.map((asset) => asset.textures));
         setCustomTextures(textures);
         const steve = createSteveSkin();
-        scene = sceneFromPayload(parsed.payload, steve, steve).scene;
+        const next = sceneFromPayload(parsed.payload, steve, steve);
+        scene = next.scene;
         engine.setMarkersVisible(false);
         engine.sync(scene);
-        engine.frameBody(Math.max(1, scene.players.length));
+        if (next.camera) engine.setCamera(next.camera);
+        else engine.frameBody(Math.max(1, scene.players.length));
       },
       async png(time, width, height) {
         if (!scene) throw new Error("load a project first");

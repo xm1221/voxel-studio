@@ -2,7 +2,8 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { projectToBbmodel, propClipFromBbmodel } from "../lib/bbmodel-io.ts";
 import { gltfToGlb, parseGlb, projectToGltf, propClipFromGltf, writeGltfJson } from "../lib/gltf-io.ts";
-import { addCatalogProp, addCustom, blankProject, customFromImage, customFromModelText, openProject, projectErrors, replacePropClip, searchCatalog, writeKeyframe } from "../lib/project-edit.ts";
+import { fetchPlayerSkin } from "../lib/player-lookup.ts";
+import { addCatalogProp, addCustom, addSkinPlayer, blankProject, customFromImage, customFromModelText, openProject, parseCamera, parseJointList, pngDataUrl, projectErrors, replacePropClip, searchCatalog, withCamera, writeJointKeyframe, writeKeyframe } from "../lib/project-edit.ts";
 import type { ProjectFile } from "../lib/project.ts";
 import type { PropChannels } from "../lib/prop-clip.ts";
 
@@ -79,10 +80,14 @@ function usage() {
   add <file> <catalogId>              place a block, item, or entity
   add <file> --png <image> --kind item|block
   add <file> --model <file.json|.bbmodel>
+  add <file> --player <name>           fetch that account's skin and add a player
+  add <file> --skin <image.png> [--name Steve] [--slim]
   keyframe <file> --prop <id> --time <seconds> [--pos x,y,z] [--rot x,y,z] [--scale x,y,z]
+  keyframe <file> --time <seconds> --joint rArmZ=-40,headY=10 [--player <id>]
   export <file> --gltf <out.gltf> | --glb <out.glb> | --bbmodel <out.bbmodel>
   import <file> --bbmodel <in.bbmodel> | --gltf <in.gltf> | --glb <in.glb>
-  render <file> --out <dir> [--fps 12] [--seconds 1] [--width 320] [--height 180] [--url http://127.0.0.1:3000]
+  render <file> --out <dir> [--fps 12] [--seconds 1] [--width 320] [--height 180]
+                [--camera px,py,pz,tx,ty,tz] [--url http://127.0.0.1:3000]
 
 Stage units: 16 = 1 block. Share links omit custom PNG bytes; project files keep them.
 `;
@@ -127,7 +132,30 @@ export async function main(argv: string[]): Promise<number> {
       const project = loadProject(file);
       const png = arg(rest, "--png");
       const model = arg(rest, "--model");
+      const playerName = arg(rest, "--player");
+      const skin = arg(rest, "--skin");
       let next = project;
+      if (playerName) {
+        const fetched = await fetchPlayerSkin(playerName);
+        const added = addSkinPlayer(project, { name: fetched.name, model: fetched.model, skin: fetched.skin, cape: fetched.cape });
+        if ("error" in added) throw new Error(added.error);
+        next = added.project;
+        save(file, next);
+        process.stdout.write(`added player ${added.playerId} ${fetched.name}\n`);
+        return 0;
+      }
+      if (skin) {
+        const added = addSkinPlayer(project, {
+          name: arg(rest, "--name") || skin.split("/").pop()?.replace(/\.png$/i, "") || "Player",
+          model: has(rest, "--slim") ? "slim" : "default",
+          skin: pngDataUrl(readFileSync(skin)),
+        });
+        if ("error" in added) throw new Error(added.error);
+        next = added.project;
+        save(file, next);
+        process.stdout.write(`added player ${added.playerId} ${next.scene.players.at(-1)?.name ?? ""}\n`);
+        return 0;
+      }
       if (png) {
         const kind = arg(rest, "--kind") === "block" ? "block" : "item";
         const added = addCustom(project, customFromImage(png.split("/").pop()?.replace(/\.png$/i, "") || "custom", kind, readFileSync(png)));
@@ -139,7 +167,7 @@ export async function main(argv: string[]): Promise<number> {
         next = added.project;
       } else {
         const id = rest[1];
-        if (!id || id.startsWith("--")) throw new Error("add needs a catalog id, --png, or --model");
+        if (!id || id.startsWith("--")) throw new Error("add needs a catalog id, --png, --model, --player, or --skin");
         const added = addCatalogProp(project, id);
         if ("error" in added) throw new Error(added.error);
         next = added.project;
@@ -152,8 +180,19 @@ export async function main(argv: string[]): Promise<number> {
     if (command === "keyframe") {
       const file = rest[0];
       const prop = arg(rest, "--prop");
+      const joint = arg(rest, "--joint");
       const time = Number(arg(rest, "--time"));
-      if (!file || !prop || !Number.isFinite(time)) throw new Error("keyframe needs <file> --prop <id> --time <seconds>");
+      if (!file || !Number.isFinite(time)) throw new Error("keyframe needs <file> --time <seconds>");
+      if (joint) {
+        const parsed = parseJointList(joint);
+        if ("error" in parsed) throw new Error(parsed.error);
+        const updated = writeJointKeyframe(loadProject(file), arg(rest, "--player"), time, parsed.joints, parsed.scalars);
+        if ("error" in updated) throw new Error(updated.error);
+        save(file, updated.project);
+        process.stdout.write(`keyed joints @ ${time}\n`);
+        return 0;
+      }
+      if (!prop) throw new Error("keyframe needs --prop <id> or --joint name=value");
       const channels: PropChannels = {};
       const position = vec(arg(rest, "--pos"));
       const rotation = vec(arg(rest, "--rot"));
@@ -230,8 +269,17 @@ export async function main(argv: string[]): Promise<number> {
       const out = arg(rest, "--out");
       if (!file || !out) throw new Error("render needs <file> --out <dir>");
       const { renderProject } = await import("./render.ts");
+      let project = loadProject(file);
+      const cameraText = arg(rest, "--camera");
+      if (cameraText) {
+        const camera = parseCamera(cameraText);
+        if ("error" in camera) throw new Error(camera.error);
+        const updated = withCamera(project, camera);
+        if ("error" in updated) throw new Error(updated.error);
+        project = updated.project;
+      }
       await renderProject({
-        project: loadProject(file),
+        project,
         out,
         fps: Number(arg(rest, "--fps") ?? 12),
         seconds: Number(arg(rest, "--seconds") ?? 1),
