@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { catalogCounts, catalogEntries, catalogEntry, catalogLabel, type CatalogEntry } from "@/lib/catalog";
+import { PropPicker, type PickerSearchOptions } from "@/components/prop-picker";
+import { catalogCounts, catalogEntries, catalogEntry, catalogLabel, catalogTextureUrl, searchCatalog, type CatalogEntry } from "@/lib/catalog";
 import { customFromPng, parseCustomFile, type CustomAsset } from "@/lib/custom-import";
-import { isMessageKey, t, type Locale, type MessageKey } from "@/lib/i18n";
+import { t, type Locale, type MessageKey } from "@/lib/i18n";
 import { withBasePath } from "@/lib/paths";
 import type { PropClip } from "@/lib/prop-clip";
 import type { SceneProp } from "@/lib/types";
@@ -11,15 +12,10 @@ import type { GizmoMode } from "@/lib/gizmo";
 import type { Space } from "@/lib/transform-math";
 import { FACE_NAMES, type FaceName } from "@/lib/model-types";
 
-const KINDS = ["all", "block", "item", "entity"] as const;
-const CATEGORIES: Record<(typeof KINDS)[number], string[]> = {
-  all: ["all"],
-  block: ["all", "building", "natural", "redstone", "functional"],
-  item: ["all", "combat", "food", "tools", "materials"],
-  entity: ["all", "passive", "hostile", "ambient"],
-};
-
-const ROW = 44;
+/** The picker passes `null` for "every category"; the catalog search calls that "all". */
+function pickerSearch(entries: CatalogEntry[], options: PickerSearchOptions): CatalogEntry[] {
+  return searchCatalog(entries, { ...options, category: options.category ?? "all" });
+}
 
 export function PropShelf({
   locale,
@@ -98,10 +94,6 @@ export function PropShelf({
 }) {
   const tr = (key: MessageKey, vars?: Record<string, string | number>) => t(locale, key, vars);
   const active = props.find((prop) => prop.id === activeId) ?? null;
-  const [kind, setKind] = useState<(typeof KINDS)[number]>("all");
-  const [category, setCategory] = useState("all");
-  const [query, setQuery] = useState("");
-  const [scroll, setScroll] = useState(0);
   const [faces, setFaces] = useState<Partial<Record<FaceName, string>>>({});
   const zipRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
@@ -119,17 +111,8 @@ export function PropShelf({
   const counts = catalogCounts();
   const entries = useMemo(() => {
     void catalogTick;
-    const needle = query.trim().toLowerCase();
-    return catalogEntries().filter((entry) => {
-      if (kind !== "all" && entry.kind !== kind) return false;
-      if (category !== "all" && entry.category !== category) return false;
-      if (!needle) return true;
-      return entry.id.toLowerCase().includes(needle) || entry.en.toLowerCase().includes(needle) || entry.zh.toLowerCase().includes(needle);
-    });
-  }, [catalogTick, category, kind, query]);
-  const start = Math.max(0, Math.floor(scroll / ROW) - 4);
-  const visible = entries.slice(start, start + 14);
-  const categories = CATEGORIES[kind];
+    return catalogEntries();
+  }, [catalogTick]);
 
   async function readPng(file: File, nextKind: "item" | "block") {
     try {
@@ -274,48 +257,15 @@ export function PropShelf({
         {counts.source === "file" ? `${counts.version} · ` : ""}
         {counts.blocks} / {counts.items} / {counts.entities}
       </p>
-      <label className="field">
-        <span>{tr("librarySearch")}</span>
-        <input value={query} placeholder={tr("librarySearch")} aria-label={tr("librarySearch")} onChange={(event) => setQuery(event.target.value)} />
-      </label>
-      <div className="row" role="group" aria-label={tr("props")}>
-        {KINDS.map((next) => (
-          <button
-            key={next}
-            type="button"
-            className={kind === next ? "chip active" : "chip"}
-            onClick={() => {
-              setKind(next);
-              setCategory("all");
-            }}
-          >
-            {tr(next === "all" ? "propAll" : next === "block" ? "propBlocks" : next === "item" ? "propItems" : "propEntities")}
-          </button>
-        ))}
-      </div>
-      {categories.length > 1 ? (
-        <div className="row" role="group" aria-label={tr("library")}>
-          {categories.map((next) => (
-            <button key={next} type="button" className={category === next ? "chip active" : "chip"} onClick={() => setCategory(next)}>
-              {catLabel(tr, next)}
-            </button>
-          ))}
-        </div>
-      ) : null}
-      {entries.length ? (
-        <div className="prop-library" onScroll={(event) => setScroll(event.currentTarget.scrollTop)}>
-          <div style={{ height: entries.length * ROW, position: "relative" }}>
-            {visible.map((entry, index) => (
-              <button key={entry.id} type="button" className="prop-row" style={{ position: "absolute", top: (start + index) * ROW, left: 0, right: 0 }} onClick={() => onAdd(entry.id)}>
-                <PropIcon entry={entry} />
-                <span>{locale === "zh" ? entry.zh : entry.en}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : (
-        <p className="empty-state">{tr("libraryEmpty")}</p>
-      )}
+      <PropPicker
+        entries={entries}
+        loading={counts.source !== "file" && entries.length === 0}
+        locale={locale}
+        tr={tr}
+        textureUrl={catalogTextureUrl}
+        onAdd={onAdd}
+        search={pickerSearch}
+      />
 
       <h2 style={{ marginTop: 16 }}>{tr("customBb")}</h2>
       <p className="hint scene-hint">{tr("customHint")}</p>
@@ -478,18 +428,22 @@ function formatNum(value: number) {
   return String(rounded);
 }
 
+function iconUrl(entry: CatalogEntry) {
+  return entry.id.includes(":") ? catalogTextureUrl(entry.icon) : withBasePath(`/vanilla/26.3/${entry.icon}`);
+}
+
 function PropIcon({ entry }: { entry: CatalogEntry | undefined }) {
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const icon = entry?.icon ?? "";
   const crop = entry?.crop;
+  const url = entry && icon ? iconUrl(entry) : "";
   useEffect(() => {
-    if (!icon || !crop) return;
+    if (!url || !crop) return;
     const image = new Image();
     image.onload = () => setSize({ w: image.naturalWidth, h: image.naturalHeight });
-    image.src = withBasePath(`/vanilla/26.3/${icon}`);
-  }, [crop, icon]);
-  if (!icon) return <i className="swatch" style={{ background: "#8b8b8b" }} aria-hidden />;
-  const url = withBasePath(`/vanilla/26.3/${icon}`);
+    image.src = url;
+  }, [crop, url]);
+  if (!icon || !url) return <i className="swatch" style={{ background: "#8b8b8b" }} aria-hidden />;
   if (!crop || !size) return <span className="prop-icon" style={{ backgroundImage: `url(${url})` }} />;
   const scale = 28 / Math.max(crop[2], crop[3], 1);
   return (
@@ -507,11 +461,6 @@ function PropIcon({ entry }: { entry: CatalogEntry | undefined }) {
 
 function entryFor(id: string) {
   return catalogEntry(id);
-}
-
-function catLabel(tr: (key: MessageKey) => string, category: string) {
-  const key = `cat.${category}`;
-  return isMessageKey(key) ? tr(key) : category;
 }
 
 function takeFile(event: { target: HTMLInputElement }, done: (file: File) => void) {
