@@ -354,7 +354,14 @@ export function buildProp(entry: CatalogEntry) {
     if (def) {
       const mesh = meshFromQuads(entityQuads(def), "entity");
       // Vanilla models face -Z after the renderer flip; turn them toward the stage camera (+Z).
-      mesh.rotation.y = Math.PI;
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const mat of mats) {
+        mat.side = DoubleSide;
+        if (def.translucent) {
+          mat.transparent = true;
+          mat.depthWrite = false;
+        }
+      }
       if (def.translucent) mesh.castShadow = false;
       group.add(mesh);
     }
