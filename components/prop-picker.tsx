@@ -286,13 +286,15 @@ export function PropPicker({ entries, loading, locale, tr, textureUrl, onAdd, se
             type="button"
             className={kind === itemKind ? "active" : undefined}
             aria-pressed={kind === itemKind}
+            aria-label={tr("pickerKindCount", { label: tr(KIND_LABEL[itemKind]), count: kindCounts[itemKind] })}
             onClick={() => {
               setKind(itemKind);
               setCategory(null);
               resetScroll();
             }}
           >
-            {tr("pickerKindCount", { label: tr(KIND_LABEL[itemKind]), count: kindCounts[itemKind] })}
+            <span>{tr(KIND_LABEL[itemKind])}</span>
+            <small aria-hidden>{kindCounts[itemKind]}</small>
           </button>
         ))}
       </div>
