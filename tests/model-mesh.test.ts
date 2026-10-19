@@ -235,6 +235,86 @@ describe("entity ModelPart / Blockbench box UV", () => {
     const ys = quads.flatMap((q) => q.positions.map((p) => p[1]));
     assert.ok(Math.max(...ys) > 28, `wither skeleton should be tall, got ${Math.max(...ys)}`);
   });
+
+  it("emits outward normals per cube after the odd vanilla world map", () => {
+    const ids = [
+      "entity:creeper",
+      "entity:pig",
+      "entity:cow",
+      "entity:zombie",
+      "entity:skeleton",
+      "entity:wither_skeleton",
+      "entity:ghast",
+      "entity:guardian",
+      "entity:enderman",
+      "entity:iron_golem",
+    ];
+    for (const id of ids) {
+      const def = entityDef(id);
+      assert.ok(def, id);
+      const quads = entityQuads(def);
+      assert.ok(quads.length >= 6, id);
+      let inward = 0;
+      for (let i = 0; i + 6 <= quads.length; i += 6) {
+        const cube = quads.slice(i, i + 6);
+        let cx = 0, cy = 0, cz = 0, n = 0;
+        for (const q of cube) for (const p of q.positions) {
+          cx += p[0]; cy += p[1]; cz += p[2]; n += 1;
+        }
+        cx /= n; cy /= n; cz /= n;
+        for (const q of cube) {
+          const mid = [0, 0, 0];
+          for (const p of q.positions) {
+            mid[0] += p[0]; mid[1] += p[1]; mid[2] += p[2];
+          }
+          mid[0] /= 4; mid[1] /= 4; mid[2] /= 4;
+          const toOut = [mid[0] - cx, mid[1] - cy, mid[2] - cz];
+          const dot = q.normal[0] * toOut[0] + q.normal[1] * toOut[1] + q.normal[2] * toOut[2];
+          if (dot < -1e-6) inward += 1;
+        }
+      }
+      assert.equal(inward, 0, `${id} has ${inward} inward faces`);
+    }
+  });
+
+  it("matches CubeDump head polygon positions for a synthetic 8³ cube", () => {
+    // CubeDump head mirror=false (tex 64x32): down face corners in model space.
+    const def = {
+      id: "golden-head",
+      label: "golden",
+      category: "hostile" as const,
+      texture: "entity/creeper/creeper.png",
+      texW: 64,
+      texH: 32,
+      root: {
+        cubes: [{ u: 0, v: 0, x: -4, y: -8, z: -4, w: 8, h: 8, d: 8 }],
+      },
+    };
+    const quads = entityQuads(def);
+    assert.equal(quads.length, 6);
+    // After world map + reverse, the physical top of the cube (model down face,
+    // y flipped) sits at y = 24 - (-8) = 32 before ground-align; ground-align
+    // then shifts minY→0 so top is at y=8.
+    const ys = quads.flatMap((q) => q.positions.map((p) => p[1]));
+    assert.equal(Math.min(...ys), 0);
+    assert.equal(Math.max(...ys), 8);
+    // Every face still outward relative to cube centroid.
+    let cx = 0, cy = 0, cz = 0, n = 0;
+    for (const q of quads) for (const p of q.positions) {
+      cx += p[0]; cy += p[1]; cz += p[2]; n += 1;
+    }
+    cx /= n; cy /= n; cz /= n;
+    for (const q of quads) {
+      const mid = [0, 0, 0];
+      for (const p of q.positions) {
+        mid[0] += p[0]; mid[1] += p[1]; mid[2] += p[2];
+      }
+      mid[0] /= 4; mid[1] /= 4; mid[2] /= 4;
+      const toOut = [mid[0] - cx, mid[1] - cy, mid[2] - cz];
+      const dot = q.normal[0] * toOut[0] + q.normal[1] * toOut[1] + q.normal[2] * toOut[2];
+      assert.ok(dot > 0, `face ${q.face} normal not outward (dot=${dot})`);
+    }
+  });
 });
 
 describe("generated item extrusion", () => {

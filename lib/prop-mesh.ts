@@ -134,6 +134,15 @@ function imageDataOf(texture: Texture): { width: number; height: number; data: U
 /** Cutout textures get alphaTest and double-sided faces; partly transparent ones stay translucent. */
 function scanAlpha(file: string, texture: Texture) {
   if (textureFlags.has(file)) return;
+  // Entity skins reserve transparent padding outside box-UV regions. Nearest
+  // filtering at texel edges can sample that padding; treating them as cutout
+  // punches holes in otherwise solid cubes. Skip cutout for entity/*.
+  if (file.startsWith("entity/")) {
+    const flags = { cutout: false, translucent: false };
+    textureFlags.set(file, flags);
+    for (const material of materialsByTexture.get(file) ?? []) applyTextureFlags(material, flags);
+    return;
+  }
   const image = imageDataOf(texture);
   if (!image) return;
   let cutout = false;
@@ -353,7 +362,9 @@ export function buildProp(entry: CatalogEntry) {
     const def = entityDef(entry.id);
     if (def) {
       const mesh = meshFromQuads(entityQuads(def), "entity");
-      // Vanilla models face -Z after the renderer flip; turn them toward the stage camera (+Z).
+      // entityQuads winds faces outward after the vanilla world map. Keep
+      // DoubleSide for entity skins (they have unused transparent texels and
+      // alphaTest cutout); translucent skins also need both sides.
       const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       for (const mat of mats) {
         mat.side = DoubleSide;
