@@ -1,0 +1,26 @@
+# Pixelstage
+
+Pixelstage is a Next.js Minecraft skin stage. Live site: https://tools.xm1221.cn/mcrender (base path `/mcrender`).
+
+## Project file
+
+`pixelstage.project.json` is `{ v: 1, scene, customs }`. Schema: `schema/pixelstage.project.schema.json`. 16 stage units = 1 block. Prop ids look like `o_ab12cd`. Catalog ids are `block:`, `item:`, `entity:`, a legacy short id (`stone`, `creeper`), or `custom:`.
+
+Custom PNG bytes are data URLs on `customs`. Share links keep the id and drop the bytes.
+
+## Catalog plug-in
+
+`lib/catalog.ts` exports `catalogEntries()`, `catalogEntry()`, and `installCatalog()`. Drop `public/vanilla/catalog.json` to replace the 17-item shelf. Do not hand-edit the generator, `lib/entities.ts`, or committed vanilla textures from this guide. File shape: `{ version, blocks, items, entities, entries: [{ id, kind, category, icon, en, zh, crop?, model? }] }`.
+
+## CLI
+
+`node cli/pixelstage.mjs` — commands: `init`, `validate`, `list`, `add`, `keyframe`, `export`, `import`, `render`. Details and examples: `docs/cli.md`.
+
+`validate` errors include a JSON pointer. `export --glb` / `--gltf` is node animation with nearest-filtered embedded PNGs. `export --bbmodel` plus `import --bbmodel` round-trips prop animation. `render` needs the Next server and Chrome; it uses the same studio engine as the page at `/render`.
+
+## Interop caveats
+
+- glTF is Y-up in stage units, not a skinned player. The player is a locator node. Prop nodes are named with their prop id.
+- Blockbench import reads animation keys for groups whose uuid equals a prop id. Geometry import of `.bbmodel` is a separate path (`customFromBbmodel`) and does not require an animation.
+- A missing vanilla PNG is replaced with a 1×1 placeholder so the file still opens. Put textures under `public/vanilla/` before export if Blender should see the real pixels.
+- Rotation snap in the studio is 15° while snap is on. Exported keys store the authored degrees.

@@ -55,6 +55,9 @@ export function PropShelf({
   onImportCustom,
   onExportProject,
   onImportProject,
+  onExportGltf,
+  onExportBbmodel,
+  onImportAnim,
   onError,
   onImportPack,
   onClearPack,
@@ -92,6 +95,9 @@ export function PropShelf({
   onImportCustom: (asset: CustomAsset) => void;
   onExportProject: () => void;
   onImportProject: (file: File) => void;
+  onExportGltf: () => void;
+  onExportBbmodel: () => void;
+  onImportAnim: (file: File) => void;
   onError: (error: unknown) => void;
   onImportPack: (files: File[], mode: "zip" | "folder") => void;
   onClearPack: () => void;
@@ -109,6 +115,7 @@ export function PropShelf({
   const blockRef = useRef<HTMLInputElement>(null);
   const modelRef = useRef<HTMLInputElement>(null);
   const projectRef = useRef<HTMLInputElement>(null);
+  const animRef = useRef<HTMLInputElement>(null);
   const faceRef = useRef<HTMLInputElement>(null);
   const faceSlot = useRef<FaceName>("north");
   useEffect(() => {
@@ -335,6 +342,15 @@ export function PropShelf({
         <button className="btn ghost" type="button" onClick={() => projectRef.current?.click()}>
           {tr("customImportProject")}
         </button>
+        <button className="btn ghost" type="button" onClick={onExportGltf}>
+          {tr("exportGltf")}
+        </button>
+        <button className="btn ghost" type="button" onClick={onExportBbmodel}>
+          {tr("exportBbmodel")}
+        </button>
+        <button className="btn ghost" type="button" onClick={() => animRef.current?.click()}>
+          {tr("importAnim")}
+        </button>
       </div>
       <details className="advanced">
         <summary>{tr("customFaces")}</summary>
@@ -375,6 +391,7 @@ export function PropShelf({
       <input ref={blockRef} type="file" accept="image/png,.png" hidden aria-label={tr("customBlock")} onChange={(event) => takeFile(event, (file) => void readPng(file, "block"))} />
       <input ref={modelRef} type="file" accept=".json,.bbmodel,application/json" hidden aria-label={tr("customModel")} onChange={(event) => takeFile(event, (file) => void readModel(file))} />
       <input ref={projectRef} type="file" accept="application/json,.json" hidden aria-label={tr("customImportProject")} onChange={(event) => takeFile(event, onImportProject)} />
+      <input ref={animRef} type="file" accept=".bbmodel,.glb,.gltf,application/json" hidden aria-label={tr("importAnim")} onChange={(event) => takeFile(event, onImportAnim)} />
       <input
         ref={faceRef}
         type="file"

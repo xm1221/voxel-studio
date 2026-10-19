@@ -5,6 +5,9 @@
   "engines": {
     "node": ">=22"
   },
+  "bin": {
+    "pixelstage": "./cli/pixelstage.mjs"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -32,6 +35,8 @@
     "@types/three": "^0.186.0",
     "eslint": "^9",
     "eslint-config-next": "16.3.8",
+    "gltf-validator": "^2.0.0-dev.3.10",
+    "puppeteer-core": "^25.14.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "wrangler": "^4.151.0"
