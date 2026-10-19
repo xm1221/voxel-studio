@@ -11,6 +11,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "node --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test tests/*.test.ts",
+    "catalog": "node --disable-warning=ExperimentalWarning --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/generate-vanilla-catalog.ts",
     "build:cf": "NEXT_PUBLIC_BASE_PATH=/mcrender opennextjs-cloudflare build",
     "preview:cf": "NEXT_PUBLIC_BASE_PATH=/mcrender opennextjs-cloudflare build && NEXT_PUBLIC_BASE_PATH=/mcrender opennextjs-cloudflare preview",
     "deploy:cf": "NEXT_PUBLIC_BASE_PATH=/mcrender opennextjs-cloudflare build && NEXT_PUBLIC_BASE_PATH=/mcrender opennextjs-cloudflare deploy"

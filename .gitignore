@@ -47,3 +47,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Mojang client download used by scripts/generate-vanilla-catalog.ts
+.cache/
