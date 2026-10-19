@@ -12,11 +12,13 @@ import {
   TextureLoader,
   type Texture,
 } from "three";
-import { catalogTextureUrl, type CatalogEntry } from "./catalog.ts";
+import { catalogEntry, catalogTextureUrl, type CatalogEntry } from "./catalog.ts";
+import { customAsset } from "./custom-assets.ts";
 import { entityDef } from "./entities.ts";
 import { animatedFrame, entityQuads, geometryFromQuads, groupQuads, itemExtrusionQuads, modelQuads, type ModelQuad } from "./model-mesh.ts";
 import type { TintKind } from "./model-types.ts";
 import { withBasePath } from "./paths.ts";
+import { buildPlaceholder } from "./prop-geometry.ts";
 
 /** Bundled, committed vanilla files used by the stage floors. See public/vanilla/SOURCE.md. */
 const STAGE_ROOT = "/vanilla/26.3";
@@ -32,6 +34,7 @@ const markerMaterial = new MeshBasicMaterial({
 const loader = new TextureLoader();
 const textures = new Map<string, Texture>();
 const stageTextures = new Map<string, Texture>();
+const customUrls = new Map<string, string>();
 const tintCache = new Map<TintKind, Promise<[number, number, number]>>();
 const materials = new Map<string, MeshStandardMaterial>();
 const textureFlags = new Map<string, { cutout: boolean; translucent: boolean }>();
@@ -166,10 +169,29 @@ function applyTextureFlags(material: MeshStandardMaterial, flags: { cutout: bool
   material.needsUpdate = true;
 }
 
+/** Data URLs for `custom:` texture keys. Vanilla paths stay as files. */
+export function setCustomTextures(next: Record<string, string>) {
+  customUrls.clear();
+  for (const [key, url] of Object.entries(next)) customUrls.set(key, url);
+  for (const key of [...textures.keys()]) {
+    if (!key.startsWith("custom:") && !key.startsWith("data:")) continue;
+    textures.get(key)?.dispose();
+    textures.delete(key);
+  }
+  for (const key of [...materials.keys()]) {
+    if (!key.startsWith("custom:") && !key.startsWith("data:")) continue;
+    materials.get(key)?.dispose();
+    materials.delete(key);
+  }
+  for (const listener of packListeners) listener();
+}
+
 function textureFor(file: string) {
   const cached = textures.get(file);
   if (cached) return cached;
-  const texture = loader.load(packFileUrl(file) ?? catalogTextureUrl(file), (loaded) => {
+  const custom = customUrls.get(file);
+  const url = custom ?? (file.startsWith("data:") ? file : (packFileUrl(file) ?? catalogTextureUrl(file)));
+  const texture = loader.load(url, (loaded) => {
     prepare(loaded);
     firstFrame(loaded);
     scanAlpha(file, loaded);
@@ -390,4 +412,51 @@ export function buildProp(entry: CatalogEntry) {
   }
   addMarker(group);
   return group;
+}
+
+export function propSignature(catalogId: string) {
+  const custom = customAsset(catalogId);
+  if (custom) return `custom:${custom.id}:${custom.model.elements.length}:${Object.keys(custom.textures).length}`;
+  const entry = catalogEntry(catalogId);
+  if (entry?.kind === "entity") {
+    const def = entityDef(entry.id);
+    return def ? `entity:${def.id}` : `missing:${catalogId}`;
+  }
+  if (entry?.model?.elements.length) return `model:${entry.id}:${entry.model.elements.length}:${entry.model.layers?.length ?? 0}`;
+  return `missing:${catalogId}`;
+}
+
+/** Gizmo root: a pivot child named `visual`, plus the selection marker. */
+export function createPropGroup(catalogId: string) {
+  const root = new Group();
+  root.name = `prop-${catalogId}`;
+  const visual = new Group();
+  visual.name = "visual";
+  root.add(visual);
+  const custom = customAsset(catalogId);
+  if (custom) {
+    const mesh = meshFromQuads(modelQuads(custom.model));
+    visual.add(mesh);
+    const layers = custom.model.layers;
+    if (layers?.length) {
+      const tryUpgrade = (attempt: number) => {
+        if (upgradeGeneratedItem(mesh, layers) || attempt >= 120) return;
+        setTimeout(() => tryUpgrade(attempt + 1), 50);
+      };
+      tryUpgrade(0);
+    }
+  } else {
+    const entry = catalogEntry(catalogId);
+    if (entry) {
+      const built = buildProp(entry);
+      built.getObjectByName("marker")?.removeFromParent();
+      visual.add(built);
+    } else {
+      visual.add(buildPlaceholder());
+    }
+  }
+  addMarker(root);
+  root.userData.catalogId = catalogId;
+  root.userData.signature = propSignature(catalogId);
+  return root;
 }

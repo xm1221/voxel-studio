@@ -1139,7 +1139,7 @@ input[type="range"] {
   .prop-picker-skeleton-line {
     animation: none;
   }
-
+}
 
 @media (max-width: 960px) {
   .studio {

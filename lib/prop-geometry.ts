@@ -9,7 +9,6 @@ import {
   MeshStandardMaterial,
   type Texture,
 } from "three";
-import type { EntityBox, EntityDef } from "./entities.ts";
 import type { CompiledElement, CompiledFace, CompiledModel, CompiledRotation, FaceName, TintKind } from "./model-types.ts";
 import { FACE_NAMES } from "./model-types.ts";
 
@@ -200,74 +199,6 @@ export function buildCompiledGroup(model: CompiledModel, textureFor: TextureLook
     });
     const mesh = new Mesh(geometry, material);
     mesh.castShadow = !translucent;
-    mesh.receiveShadow = true;
-    group.add(mesh);
-  }
-  return group;
-}
-
-type CubeUv = { tu: number; tv: number; tw: number; th: number; td: number; texW: number; texH: number };
-
-function cubeGeometry(w: number, h: number, d: number, uv: CubeUv) {
-  const geometry = new BoxGeometry(w, h, d);
-  const attr = geometry.attributes.uv;
-  const { tu, tv, tw, th, td, texW, texH } = uv;
-  const regions: Array<[number, number, number, number]> = [
-    [tu + td + tw, tv + td, td, th],
-    [tu, tv + td, td, th],
-    [tu + td, tv, tw, td],
-    [tu + td + tw, tv, tw, td],
-    [tu + td, tv + td, tw, th],
-    [tu + td + tw + td, tv + td, tw, th],
-  ];
-  regions.forEach(([mu, mv, mw, mh], face) => {
-    const u0 = mu / texW;
-    const u1 = (mu + mw) / texW;
-    const vTop = 1 - mv / texH;
-    const vBot = 1 - (mv + mh) / texH;
-    const offset = face * 4;
-    attr.setXY(offset, u0, vTop);
-    attr.setXY(offset + 1, u1, vTop);
-    attr.setXY(offset + 2, u0, vBot);
-    attr.setXY(offset + 3, u1, vBot);
-  });
-  attr.needsUpdate = true;
-  return geometry;
-}
-
-export function buildEntityGroup(def: EntityDef, textureFor: (file: string) => Texture) {
-  const group = new Group();
-  for (const box of def.boxes) {
-    const sheet = box as EntityBox & { texW?: number; texH?: number };
-    const texW = sheet.texW || def.texW;
-    const texH = sheet.texH || def.texH;
-    const inflate = box.inflate ?? 0;
-    const material = new MeshStandardMaterial({
-      map: textureFor(box.texture || def.texture),
-      roughness: 1,
-      metalness: 0,
-      transparent: Boolean(box.cutout),
-      alphaTest: box.cutout ? 0.05 : 0.2,
-      depthWrite: !box.cutout,
-    });
-    const mesh = new Mesh(
-      cubeGeometry(box.w + inflate * 2, box.h + inflate * 2, box.d + inflate * 2, {
-        tu: box.u,
-        tv: box.v,
-        tw: box.w,
-        th: box.h,
-        td: box.d,
-        texW,
-        texH,
-      }),
-      material,
-    );
-    mesh.position.set(box.x, box.y, box.z);
-    if (box.spin?.x) mesh.rotation.x = (box.spin.x * Math.PI) / 180;
-    if (box.spin?.y) mesh.rotation.y = (box.spin.y * Math.PI) / 180;
-    if (box.spin?.z) mesh.rotation.z = (box.spin.z * Math.PI) / 180;
-    if (box.mirror) mesh.scale.x = -1;
-    mesh.castShadow = !box.cutout;
     mesh.receiveShadow = true;
     group.add(mesh);
   }
