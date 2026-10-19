@@ -20,6 +20,7 @@ import {
   type Texture,
 } from "three";
 import { code } from "./i18n";
+import { bundledGrassTop, bundledTexture } from "./prop-mesh";
 import type { SceneDraft } from "./types";
 import { FOOT_Y } from "./rig/layout";
 import { BACKGROUNDS, backgroundDrawRect, stageLook } from "./stage-look";
@@ -53,16 +54,6 @@ function pixelTexture(paint: (context: CanvasRenderingContext2D) => void) {
   texture.colorSpace = SRGBColorSpace;
   texture.needsUpdate = true;
   return texture;
-}
-
-function speck(context: CanvasRenderingContext2D, base: string, colors: string[], salt: number) {
-  context.fillStyle = base;
-  context.fillRect(0, 0, 16, 16);
-  for (let i = 0; i < 28; i += 1) {
-    const n = Math.abs(Math.sin((i + 1) * salt) * 10000);
-    context.fillStyle = colors[i % colors.length];
-    context.fillRect(Math.floor(n % 16), Math.floor((n * 1.7) % 16), 1, 1);
-  }
 }
 
 function blockPlatform(maps: Texture[]) {
@@ -100,20 +91,15 @@ export function createStage(scene: Scene): StageSet {
   studioFloor.receiveShadow = true;
   scene.add(studioFloor);
 
-  const grassTop = pixelTexture((context) => speck(context, "#5d9b3a", ["#6eaf45", "#4e852f", "#87c85a"], 2.2));
-  const grassSide = pixelTexture((context) => {
-    speck(context, "#8a5a32", ["#6d4524", "#a56b3e"], 4.4);
-    context.fillStyle = "#5d9b3a";
-    context.fillRect(0, 0, 16, 4);
-  });
-  const dirt = pixelTexture((context) => speck(context, "#8a5a32", ["#6d4524", "#a56b3e", "#c98958"], 6.1));
+  const grassTop = bundledGrassTop();
+  const grassSide = bundledTexture("block/grass_block_side.png");
+  const dirt = bundledTexture("block/dirt.png");
   const grass = blockPlatform([grassSide, grassSide, grassTop, dirt, grassSide, grassSide]);
   grass.visible = false;
   scene.add(grass);
 
-  const netherSide = pixelTexture((context) => speck(context, "#6a2420", ["#8d332c", "#4d1614", "#c45a3a"], 8.2));
-  const netherTop = pixelTexture((context) => speck(context, "#7a2c24", ["#a14332", "#511814"], 3.3));
-  const nether = blockPlatform([netherSide, netherSide, netherTop, netherSide, netherSide, netherSide]);
+  const netherrack = bundledTexture("block/netherrack.png");
+  const nether = blockPlatform([netherrack, netherrack, netherrack, netherrack, netherrack, netherrack]);
   nether.visible = false;
   scene.add(nether);
 
@@ -241,7 +227,7 @@ export function createStage(scene: Scene): StageSet {
     shownMode = colorKey;
   }
 
-  const textures = [studioMap, grassTop, grassSide, dirt, netherSide, netherTop];
+  const textures = [studioMap];
   const backgroundColor = new Color(BACKGROUNDS.studio);
   return {
     shadowFloor,

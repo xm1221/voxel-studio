@@ -6,8 +6,8 @@ Not shipped. Do not describe these as part of the current product.
 
 - 导出 MP4。现在只有 PNG 和 GIF。
   - MP4 export. PNG and GIF are what ship today.
-- 把 Minecraft 物品、方块、实体当作道具放进场景。
-  - Minecraft items, blocks, and entities as scene props.
+- 自定义模型文件和完整的 Minecraft 实体库。舞台上现在能放内置方块、几件物品，以及苦力怕、猪、鸡、史莱姆。
+  - Custom model files and the full Minecraft entity library. The stage can place built-in blocks, a few items, and a creeper, pig, chicken, and slime.
 - 披风高度滑块。现在只有披风开/关，没有高度。
   - Cape height slider. Capes can be shown or hidden, and that is all.
 - 舞台拖拽移动再打磨一遍。已有「移动角色」，但还没逐项核对：只改左右和前后（高度仍是滑块）、没有网格吸附、一次只能拖当前这个人。

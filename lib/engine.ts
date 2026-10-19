@@ -19,9 +19,27 @@ import { applyJoints, buildRig, configureTexture, type Rig } from "./rig/build";
 import { voxelPieces, type VoxelParent } from "./rig/layers";
 import { applyLook } from "./rig/look";
 import { applyLights, createLights } from "./lighting";
+import { buildProp } from "./prop-mesh";
+import { propSpec } from "./props";
 import { applyStage, createStage } from "./stage";
 import { loadImage, loadSkinToCanvas } from "./skin-image";
+import { FOOT_Y } from "./rig/layout";
 import type { CameraSnapshot, Joints, SceneDraft } from "./types";
+
+export type MoveTarget = { kind: "player" | "prop"; id: string };
+
+function disposePropGroup(group: Group) {
+  const geometries = new Set<{ dispose: () => void }>();
+  const materials = new Set<Material>();
+  group.traverse((object) => {
+    if (!(object instanceof Mesh) || object.name === "marker") return;
+    geometries.add(object.geometry);
+    if (Array.isArray(object.material)) object.material.forEach((entry) => materials.add(entry));
+    else materials.add(object.material);
+  });
+  geometries.forEach((geometry) => geometry.dispose());
+  materials.forEach((material) => material.dispose());
+}
 
 type ClipSampleState = {
   joints: Joints;
@@ -47,8 +65,12 @@ export class StudioEngine {
   private draft: SceneDraft | null = null;
   private lastTick = 0;
   private held = false;
-  private moveTarget: string | null = null;
-  private transformHandler: ((id: string, position: { x: number; z: number }) => void) | null = null;
+  private moveTarget: MoveTarget | null = null;
+  private transformHandler: ((target: MoveTarget & { x: number; z: number }) => void) | null = null;
+  private readonly propRoot = new Group();
+  private readonly propGroups = new Map<string, Group>();
+  private markersHidden = false;
+  private scrub: { id: string; time: number } | null = null;
   private drag:
     | {
         pointerId: number;
@@ -92,6 +114,7 @@ export class StudioEngine {
     this.controls.update();
 
     this.scene.add(this.holder);
+    this.scene.add(this.propRoot);
     this.lights = createLights(this.scene);
     this.stage = createStage(this.scene);
 
@@ -121,16 +144,28 @@ export class StudioEngine {
     this.loop();
   }
 
+  private movedPosition() {
+    const target = this.moveTarget;
+    const draft = this.draft;
+    if (!target || !draft) return null;
+    if (target.kind === "prop") {
+      const prop = draft.props.find((item) => item.id === target.id);
+      return prop ? { x: prop.position.x, z: prop.position.z } : null;
+    }
+    const player = draft.players.find((item) => item.id === target.id);
+    return player ? { x: player.position.x, z: player.position.z } : null;
+  }
+
   private onPointerDown = (event: PointerEvent) => {
     if (!this.moveTarget || event.button !== 0) return;
-    const player = this.draft?.players.find((item) => item.id === this.moveTarget);
-    if (!player) return;
+    const startPosition = this.movedPosition();
+    if (!startPosition) return;
     event.preventDefault();
     this.drag = {
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
-      startPosition: { x: player.position.x, z: player.position.z },
+      startPosition,
     };
     this.renderer.domElement.setPointerCapture(event.pointerId);
     this.renderer.domElement.style.cursor = "grabbing";
@@ -138,8 +173,8 @@ export class StudioEngine {
 
   private onPointerMove = (event: PointerEvent) => {
     if (!this.drag || this.drag.pointerId !== event.pointerId) return;
-    const id = this.moveTarget;
-    if (!id) return;
+    const target = this.moveTarget;
+    if (!target) return;
     event.preventDefault();
     const canvas = this.renderer.domElement;
     const height = Math.max(canvas.clientHeight, 1);
@@ -160,7 +195,9 @@ export class StudioEngine {
     const dx = event.clientX - this.drag.startX;
     const dy = event.clientY - this.drag.startY;
     const clamp = (value: number) => Math.max(-32, Math.min(32, value));
-    this.transformHandler?.(id, {
+    this.transformHandler?.({
+      kind: target.kind,
+      id: target.id,
       x: clamp(this.drag.startPosition.x + dx * unit * right.x - dy * unit * forward.x),
       z: clamp(this.drag.startPosition.z + dx * unit * right.z - dy * unit * forward.z),
     });
@@ -242,9 +279,46 @@ export class StudioEngine {
       }
     });
 
+    this.syncProps(draft);
     applyLights(this.lights, draft);
     applyStage(this.stage, this.scene, this.renderer, draft);
     this.poseAll(0);
+  }
+
+  private syncProps(draft: SceneDraft) {
+    const ids = new Set(draft.props.map((prop) => prop.id));
+    for (const [id, group] of this.propGroups) {
+      if (ids.has(id)) continue;
+      this.propRoot.remove(group);
+      this.propGroups.delete(id);
+    }
+    for (const prop of draft.props) {
+      let group = this.propGroups.get(prop.id);
+      if (!group || group.userData.catalogId !== prop.catalogId) {
+        const spec = propSpec(prop.catalogId);
+        if (!spec) continue;
+        if (group) this.propRoot.remove(group);
+        group = buildProp(spec);
+        group.userData.catalogId = prop.catalogId;
+        this.propRoot.add(group);
+        this.propGroups.set(prop.id, group);
+      }
+      group.position.set(prop.position.x, FOOT_Y + prop.position.y, prop.position.z);
+      group.rotation.y = (prop.rotationY * Math.PI) / 180;
+      group.scale.setScalar(prop.scale);
+      const marker = group.getObjectByName("marker");
+      if (marker) marker.visible = !this.markersHidden && prop.id === draft.activePropId;
+    }
+  }
+
+  /** Drop prop meshes so the next sync rebuilds them with the current textures. */
+  reloadProps() {
+    for (const group of this.propGroups.values()) {
+      this.propRoot.remove(group);
+      disposePropGroup(group);
+    }
+    this.propGroups.clear();
+    if (this.draft) this.syncProps(this.draft);
   }
 
   private poseAll(dt: number, exactTime?: number) {
@@ -253,18 +327,20 @@ export class StudioEngine {
     draft.players.forEach((player, index) => {
       const rig = this.rigs.get(player.id);
       if (!rig) return;
-      const clipChanged = rig.lastClip !== player.clip || rig.lastAnimation !== player.customAnimation;
+      const clipChanged = rig.lastClip !== player.clip;
       if (clipChanged) {
         rig.lastClip = player.clip;
-        rig.lastAnimation = player.customAnimation;
         rig.clipTime = 0;
       }
+      rig.lastAnimation = player.customAnimation;
       const speed = Number.isFinite(player.clipSpeed) && player.clipSpeed > 0 ? player.clipSpeed : 1;
-      if (exactTime === undefined && player.clip !== "none") rig.clipTime += dt * speed;
+      const scrubbing = exactTime === undefined && this.scrub?.id === player.id && player.clip === "custom" && player.customAnimation;
+      if (scrubbing) rig.clipTime = this.scrub?.time ?? rig.clipTime;
+      else if (exactTime === undefined && player.clip !== "none") rig.clipTime += dt * speed;
       const time = exactTime === undefined ? rig.clipTime : exactTime * speed;
-      const sampled = sampleMotion(player, time + motionPhaseOffset(index, player), player.joints);
+      const sampled = sampleMotion(player, time + (scrubbing ? 0 : motionPhaseOffset(index, player)), player.joints);
       let shown = this.shown.get(player.id);
-      if (!shown || exactTime !== undefined || clipChanged) {
+      if (!shown || exactTime !== undefined || clipChanged || scrubbing) {
         shown = { joints: { ...sampled.joints }, bob: sampled.bob, sway: sampled.sway, roll: sampled.roll, cape: sampled.cape, ready: true };
         if (exactTime === undefined) this.shown.set(player.id, shown);
       } else {
@@ -417,19 +493,49 @@ export class StudioEngine {
     }
   }
 
-  setMoveTarget(id: string | null) {
-    this.moveTarget = id;
-    this.controls.enabled = !id;
-    this.renderer.domElement.style.cursor = id ? "grab" : "default";
-    if (!id && this.drag) {
+  setMoveTarget(target: MoveTarget | null) {
+    this.moveTarget = target;
+    this.controls.enabled = !target;
+    this.renderer.domElement.style.cursor = target ? "grab" : "default";
+    if (!target && this.drag) {
       const canvas = this.renderer.domElement;
       if (canvas.hasPointerCapture(this.drag.pointerId)) canvas.releasePointerCapture(this.drag.pointerId);
       this.drag = null;
     }
   }
 
-  setTransformHandler(handler: ((id: string, position: { x: number; z: number }) => void) | null) {
+  setTransformHandler(handler: ((target: MoveTarget & { x: number; z: number }) => void) | null) {
     this.transformHandler = handler;
+  }
+
+  setScrub(id: string | null, time?: number) {
+    if (!id || time === undefined || !Number.isFinite(time)) {
+      this.scrub = null;
+      return;
+    }
+    this.scrub = { id, time: Math.max(0, time) };
+  }
+
+  getMotionTime(id: string) {
+    const rig = this.rigs.get(id);
+    const player = this.draft?.players.find((item) => item.id === id);
+    if (!rig || !player) return 0;
+    if (player.clip === "custom" && player.customAnimation) {
+      const duration = player.customAnimation.duration;
+      if (duration <= 0) return 0;
+      const wrapped = rig.clipTime % duration;
+      return wrapped < 0 ? wrapped + duration : wrapped;
+    }
+    return rig.clipTime;
+  }
+
+  setMarkersVisible(visible: boolean) {
+    this.markersHidden = !visible;
+    const active = this.draft?.activePropId;
+    for (const [id, group] of this.propGroups) {
+      const marker = group.getObjectByName("marker");
+      if (marker) marker.visible = visible && id === active;
+    }
   }
 
   frameBody(count: number) {
@@ -478,6 +584,7 @@ export class StudioEngine {
       setHeld: (held: boolean) => {
         this.held = held;
       },
+      setMarkersVisible: (visible: boolean) => this.setMarkersVisible(visible),
     };
   }
 
@@ -508,6 +615,8 @@ export class StudioEngine {
     canvas.removeEventListener("pointerup", this.onPointerUp);
     canvas.removeEventListener("pointercancel", this.onPointerUp);
     for (const rig of this.rigs.values()) this.disposeRig(rig);
+    this.propRoot.clear();
+    this.propGroups.clear();
     this.gradient.dispose();
     this.stage.dispose();
     this.renderer.dispose();

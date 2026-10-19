@@ -50,6 +50,8 @@ function scene(): SceneDraft {
     light: "soft",
     keyIntensity: 1,
     formatId: "youtube",
+    props: [],
+    activePropId: null,
   };
 }
 

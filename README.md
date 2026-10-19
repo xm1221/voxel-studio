@@ -12,21 +12,27 @@ A Minecraft skin stage in the browser. Look up a player or drop in a skin, pose 
 - 手机上控制收进抽屉，桌面则在右侧面板。
 - 场景：棚拍、正午、黄昏、夜晚、下界、透明。也可以上传 PNG / JPG / WebP 当背景（铺满或完整），脚下留着影子。
 - 导出 PNG（含透明）和 GIF。尺寸有头像、方图、小红书、YouTube、竖屏、桌面、横幅和 4K。
-- 分享链接带上姿势、动作、灯光和机位。上传的皮肤和背景图只留在这台浏览器里。
+- 分享链接带上姿势、动作、灯光、机位和道具。上传的皮肤和背景图只留在这台浏览器里。
 - 正版披风会跟着账号下来，可以关掉。
 - 关节含肘和膝，外层可以是平面或 3D。名牌和气泡，柔光 / 硬光 / 霓虹 / 月光。
 - 界面可以切中文或英文。右上角的「中 / EN」会记在这台浏览器里；没选过时，语言以 `zh` 开头用中文，否则用英文。
-- 动作可以导入、导出关键帧动画 JSON。格式见下面的「动画 JSON」。
+- 动作可以在时间线上拖关键帧，也可以导入、导出关键帧动画 JSON。格式见下面的「动画 JSON」。
+- 道具：草方块、木头、TNT 这类方块，剑、苹果、火把，以及苦力怕、猪、鸡、史莱姆。贴图来自原版 Java 26.3。能选中、移动，并进入 PNG、GIF 和分享链接。可以导入材质包替换这些贴图；包只留在这台浏览器里。
+
+
 
 - Up to 4 players. Each one has their own pose, clip, speed, position, and scale.
 - On a phone the controls sit in a drawer; on a desktop they stay in the side panel.
 - Backgrounds: studio, noon, sunset, night, nether, or transparent. You can also upload a PNG, JPG, or WebP (cover or contain). The contact shadow stays.
 - Export PNG (including a transparent PNG) and GIF. Sizes: avatar, square, Xiaohongshu, YouTube, story, desktop, banner, and 4K.
-- Share links carry the pose, motion, lights, and camera. Uploaded skins and background images stay in this browser.
+- Share links carry the pose, motion, lights, camera, and props. Uploaded skins and background images stay in this browser.
 - Capes from the account can be turned off.
 - Elbows and knees, a flat or voxel outer layer, nametags and speech bubbles, and soft / hard / neon / moon light.
 - The interface is Chinese or English. The 中 / EN control in the top bar is saved in this browser. With nothing saved, a `zh` locale stays in Chinese and every other language starts in English.
-- Motion can be imported and exported as keyframe animation JSON. The format is under Animation JSON below.
+- Motion can be edited on a timeline, and imported or exported as keyframe animation JSON. The format is under Animation JSON below.
+- Props: blocks such as grass, logs, and TNT, plus a sword, apple, torch, and a creeper, pig, chicken, and slime. Textures are the vanilla Java 26.3 files. They can be selected and moved, and they are included in PNG, GIF, and share links. A resource pack can replace those textures; the pack stays in this browser.
+
+
 
 ## 怎么用 / How to use
 
@@ -34,25 +40,39 @@ A Minecraft skin stage in the browser. Look up a player or drop in a skin, pose 
 2. 「场景」里换地面和天空，或上传一张背景图。图片太大时会缩到长边 1920。
 3. 选一个姿势，再用关节滑块改肘和膝。摆乱了按「恢复默认」：当前这个人回到站立、呼吸、速度 1、原点、缩放 1，名牌、气泡和自定义动画都清空。皮肤还在。
 4. 「恢复场景」把灯光、调色、描边、体积光和背景（含上传的图）收回默认棚拍。
-5. 「动作」里可以静止、呼吸、行走、跑步、挥手或欢呼，也可以导入一份关键帧动画 JSON。格式见下方「动画 JSON」。
+5. 「动作」里可以静止、呼吸、行走、跑步、挥手或欢呼。时间线可以加关键帧、拖时间、看关节曲线；「高级：JSON」仍是原来的 v1 导入导出。
 6. 拖拽旋转，滚轮或双指缩放。头像用「头像机位」。「移动角色」在地面上拖当前这个人。
 7. 选一个尺寸后下载 PNG，或导出同比例的 GIF。透明 PNG 不带背景图。
-8. 「复制链接」分享姿势和机位。对方看不到你上传的皮肤和背景图。
+8. 「道具」里把方块、物品或生物放到角色旁边。选中之后用「移动角色」在地面上拖，高度和转向用滑块。
+9. 同一页可以「导入材质包」（`.zip` / `.mcpack`）或选一个含 `assets/minecraft/textures/` 的文件夹。舞台只取它认识的方块、物品和生物贴图（也认 1.12 的 `textures/blocks`、`textures/items`，以及猪、鸡的 `*_temperate` 皮肤）。没有的文件继续用原版。包存在这台浏览器的 IndexedDB 里，刷新还在。「恢复原版」清掉它。分享链接不包含材质包，对方看到的是原版贴图。
+10. 「复制链接」分享姿势、机位和道具。对方看不到你上传的皮肤、背景图和材质包。
 
 1. Enter a Java Edition name, or upload a 64×64 PNG (legacy 64×32 works too). Steve and Alex are built in.
 2. Use 场景 to switch the ground and sky, or upload a background. Large images are scaled so the long edge is 1920px.
 3. Pick a pose, then move the elbows and knees. 恢复默认 puts the active player back on the idle pose, the idle clip, speed 1, the origin, and scale 1, and clears the nametag, bubble, and custom animation. The skin stays.
 4. 恢复场景 resets lights, grade, outline, godrays, and the background, including an uploaded image, to the studio default.
-5. Clips: still, idle, walk, run, wave, cheer. You can also import a keyframe animation JSON. The format is under Animation JSON below.
+5. Clips: still, idle, walk, run, wave, cheer. The timeline adds and drags keyframes and shows a joint curve. Advanced: JSON is the same v1 import and export.
 6. Drag to orbit, scroll or pinch to zoom. 头像机位 frames the head. 移动角色 drags the active player on the ground.
 7. Pick a size and download a PNG, or export a GIF at the same ratio. A transparent PNG does not include the background image.
-8. 复制链接 shares the pose and camera. The other person will not see an uploaded skin or background image.
+8. In 道具, place a block, item, or mob beside the skin. Select it, then use 移动角色 to drag it on the ground. Height and turn stay on sliders.
+9. On that same tab, Import pack takes a `.zip` or `.mcpack`, or Folder takes a directory that contains `assets/minecraft/textures/`. The stage reads the block, item, and mob textures it knows (including 1.12 `textures/blocks` and `textures/items`, and the pig and chicken `*_temperate` skins). Missing files stay vanilla. The pack is stored in this browser’s IndexedDB and is still there after a reload. Vanilla textures clears it. Share links do not contain the pack, so the other person sees vanilla textures.
+10. 复制链接 shares the pose, camera, and props. The other person will not see an uploaded skin, background image, or resource pack.
+
+## 贴图 / Textures
+
+道具和正午、下界的地面用的是 Minecraft Java **26.3** 客户端里的原版 PNG，没有重画。文件在 `public/vanilla/26.3/`，来源写在 `public/vanilla/SOURCE.md`。草方块顶部材质是原版灰度图，乘上 `colormap/grass.png` 里平原的颜色，和游戏里的染色一样。生物按原版贴图的 UV 摊开（苦力怕、猪、鸡、史莱姆），不是色块。
+
+这些贴图版权属于 Mojang。Pixelstage 不隶属 Mojang，也不拥有这些文件。它们只用来显示舞台上已经有的方块、物品和生物。
+
+Props and the noon and nether floors use unmodified PNGs from the Minecraft Java **26.3** client. Nothing was redrawn. The files live in `public/vanilla/26.3/`, and `public/vanilla/SOURCE.md` records the jar. Grass block top is the vanilla grayscale texture multiplied by the plains color in `colormap/grass.png`, the same tint the game applies. Mobs use the vanilla texture UV layout (creeper, pig, chicken, slime), not solid-color boxes.
+
+Those textures are copyright Mojang. Pixelstage is not affiliated with Mojang and does not own the files. They are used only to show the blocks, items, and mobs already on the stage.
 
 ## 动画 JSON / Animation JSON
 
-「导出动画」下载当前这个人的自定义动画。如果正在播的是内置动作，下载的是那套动作烘焙出来的 JSON，不是滑块上的姿势。「导入动画」读一个 `.json` 文件；也可以把 JSON 贴进「动画 JSON」再按「粘贴导入」。导入只改当前选中的人，并切到以该动画命名的自定义动作。每个人各自一份。分享链接和这台浏览器的本地保存都会带上它。「恢复默认」会清掉。
+时间线改的就是这份 v1 文档：加帧、拖时间、写关节，再导出，字段和以前一样。「导出动画」下载当前这个人的自定义动画。如果正在播的是内置动作，下载的是那套动作烘焙出来的 JSON，不是滑块上的姿势。「导入动画」在「高级：JSON」里，读一个 `.json` 文件；也可以把 JSON 贴进去再按「粘贴导入」。导入只改当前选中的人，并切到以该动画命名的自定义动作。每个人各自一份。分享链接和这台浏览器的本地保存都会带上它。「恢复默认」会清掉。
 
-Export animation downloads the active player’s custom animation. If a built-in clip is playing, the download is that clip baked to JSON, not the slider pose. Import animation reads a `.json` file. You can also paste JSON into Animation JSON and press Import paste. Import applies to the selected player only and switches them to a custom clip named from the file. Each player has their own. Share links and this browser’s save both keep it. Reset clears it.
+The timeline edits this same v1 document: add a key, drag its time, write joints, then export. The fields are unchanged. Export animation downloads the active player’s custom animation. If a built-in clip is playing, the download is that clip baked to JSON, not the slider pose. Import animation lives under Advanced: JSON. It reads a `.json` file, or you can paste JSON and press Import paste. Import applies to the selected player only and switches them to a custom clip named from the file. Each player has their own. Share links and this browser’s save both keep it. Reset clears it.
 
 播放速度仍用「慢 / 正常 / 快」（0.65×、1×、1.45×）。文件里的 `duration` 是 1× 时的秒数。GIF 会把这段时长收成 12–28 帧。
 

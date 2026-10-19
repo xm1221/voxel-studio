@@ -1,5 +1,5 @@
 import { animationDocument, parseAnimationDocument } from "./motion.ts";
-import type { AnimationDef, BackgroundFit, CameraSnapshot, ClipId, Joints, LayerMode, PlayerDraft, SceneDraft } from "./types";
+import type { AnimationDef, BackgroundFit, CameraSnapshot, ClipId, Joints, LayerMode, PlayerDraft, SceneDraft, SceneProp } from "./types";
 
 export function layerModeFrom(value: unknown): LayerMode {
   return value === "voxel" ? "voxel" : "flat";
@@ -35,6 +35,9 @@ export type SharePayload = {
   clipSpeed?: number;
   camera?: CameraSnapshot;
   players: PlayerPayload[];
+  /** Optional. Links from before props shipped omit this and still decode. */
+  props?: SceneProp[];
+  activePropId?: string | null;
 };
 
 export type PlayerPayload = Omit<
@@ -117,6 +120,18 @@ export function toPayload(scene: SceneDraft, camera: CameraSnapshot | undefined,
     keyIntensity: scene.keyIntensity,
     formatId: scene.formatId,
     camera,
+    ...(scene.props.length
+      ? {
+          props: scene.props.map((prop) => ({
+            id: prop.id,
+            catalogId: prop.catalogId,
+            position: { ...prop.position },
+            rotationY: prop.rotationY,
+            scale: prop.scale,
+          })),
+          ...(scene.activePropId ? { activePropId: scene.activePropId } : {}),
+        }
+      : {}),
     players: scene.players.map((player) => ({
       id: player.id,
       name: player.name,

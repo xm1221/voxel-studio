@@ -14,6 +14,7 @@ export type CaptureHost = {
   rigs: Iterable<{ nametag: Mesh; bubble: Mesh; ring: Mesh }>;
   poseAll: (dt: number, exactTime?: number) => void;
   setHeld: (held: boolean) => void;
+  setMarkersVisible?: (visible: boolean) => void;
 };
 
 export async function captureStill(
@@ -28,6 +29,7 @@ export async function captureStill(
   const sample = Math.max(options.width, options.height) <= 2048 ? 2 : 1;
 
   if (options.transparent) hideBackdrop(host);
+  host.setMarkersVisible?.(false);
 
   host.renderer.setPixelRatio(1);
   host.renderer.setSize(options.width * sample, options.height * sample, false);
@@ -49,6 +51,7 @@ export async function captureStill(
     context.clip();
   }
   context.drawImage(host.renderer.domElement, 0, 0, options.width, options.height);
+  host.setMarkersVisible?.(true);
   restoreWorld(host, saved, ratio, viewW, viewH);
 
   const blob = await new Promise<Blob | null>((resolve) => output.toBlob(resolve, "image/png"));
@@ -80,6 +83,7 @@ export async function captureClip(
 
   try {
     if (options.transparent) hideBackdrop(host);
+    host.setMarkersVisible?.(false);
     for (const rig of rigs) rig.ring.visible = false;
     host.renderer.setPixelRatio(1);
     host.renderer.setSize(options.width, options.height, false);
@@ -120,6 +124,7 @@ export async function captureClip(
     const encoded = encodeGif(gifFrames, options.width, options.height);
     return new Blob([Uint8Array.from(encoded)], { type: "image/gif" });
   } finally {
+    host.setMarkersVisible?.(true);
     host.holder.rotation.y = spin;
     restoreWorld(host, saved, ratio, viewW, viewH);
     rigs.forEach((rig, index) => {

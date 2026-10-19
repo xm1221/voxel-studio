@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { PropShelf } from "@/components/prop-shelf";
+import { TimelineEditor } from "@/components/timeline-editor";
 import { createAlexSkin, createSteveSkin } from "@/lib/defaults";
 import { StudioEngine } from "@/lib/engine";
 import { LOCALE_STORAGE_KEY, code, errorNote, htmlLang, note, parseNote, readLocale, t, type Locale, type MessageKey, type Note } from "@/lib/i18n";
@@ -10,12 +12,22 @@ import { backgroundImageFrom, decodePayload, encodePayload, toPayload } from "@/
 import { POSES } from "@/lib/poses";
 import { PRESET_STORAGE_KEY, mergePresets, newPresetId, parsePresetDocument, presetDocument, type UserPreset } from "@/lib/presets";
 import { inferModelType, loadImage, loadSkinToCanvas } from "@/lib/skin-image";
+import { clearStoredPropTexturePack, loadStoredPropTexturePack, storePropTexturePack } from "@/lib/pack-store";
+import { applyPropTexturePack, clearPropTexturePack, propTexturePack, subscribePropTextures } from "@/lib/prop-mesh";
+import { MAX_PROPS, placeProp } from "@/lib/props";
+import { readResourcePack, texturesFromFolder, type PackTexture } from "@/lib/resource-pack";
 import { STORAGE_KEY, defaultScene, makePlayer, requestPlayer, resetPlayer, resetSceneLook, sceneFromPayload } from "@/lib/studio-state";
-import type { CameraSnapshot, Joints, PlayerDraft, SceneDraft } from "@/lib/types";
+import type { CameraSnapshot, Joints, PlayerDraft, SceneDraft, SceneProp } from "@/lib/types";
 
 let builtinSkins: { steve: string; alex: string } | null = null;
 let bootCamera: CameraSnapshot | undefined;
 let bootRefetch: string[] = [];
+
+function pngBlob(bytes: Uint8Array) {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return new Blob([copy], { type: "image/png" });
+}
 
 function ensureSkins() {
   if (!builtinSkins && typeof document !== "undefined") {
@@ -23,6 +35,15 @@ function ensureSkins() {
   }
   return builtinSkins;
 }
+
+const PANELS = ["scene", "cast", "motion", "props"] as const;
+type PanelId = (typeof PANELS)[number];
+const PANEL_LABEL: Record<PanelId, MessageKey> = {
+  scene: "tabScene",
+  cast: "tabCast",
+  motion: "tabMotion",
+  props: "tabProps",
+};
 
 const BACKGROUNDS = ["studio", "noon", "sunset", "night", "nether", "none"] as const;
 const GRADES = ["clean", "hologram", "ice", "comic"] as const;
@@ -89,6 +110,7 @@ export function Studio() {
   const [animationJson, setAnimationJson] = useState("");
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [panel, setPanel] = useState<PanelId>("cast");
 
   const [scene, setScene] = useState<SceneDraft | null>(() => {
     const skins = ensureSkins();
@@ -133,6 +155,27 @@ export function Studio() {
   useEffect(() => {
     sceneRef.current = scene;
   }, [scene]);
+
+  const [texturePack, setTexturePack] = useState<{ name: string; count: number } | null>(null);
+
+  useEffect(() => subscribePropTextures(() => {
+    engineRef.current?.reloadProps();
+    setTexturePack(propTexturePack());
+  }), []);
+
+  useEffect(() => {
+    let cancel = false;
+    void loadStoredPropTexturePack()
+      .then((stored) => {
+        if (cancel || !stored) return;
+        const files = new Map(stored.textures.map((texture) => [texture.key, pngBlob(texture.bytes)]));
+        applyPropTexturePack(stored.name, files);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancel = true;
+    };
+  }, []);
 
   useEffect(() => {
     const element = viewRef.current;
@@ -195,24 +238,40 @@ export function Studio() {
   useEffect(() => {
     const engine = engineRef.current;
     if (!engine) return;
-    engine.setTransformHandler((id, position) => {
-      setScene((current) =>
-        current
-          ? {
-              ...current,
-              players: current.players.map((player) =>
-                player.id === id ? { ...player, position: { ...player.position, x: position.x, z: position.z } } : player,
-              ),
-            }
-          : current,
-      );
+    engine.setTransformHandler((target) => {
+      setScene((current) => {
+        if (!current) return current;
+        if (target.kind === "prop") {
+          return {
+            ...current,
+            props: current.props.map((prop) =>
+              prop.id === target.id ? { ...prop, position: { ...prop.position, x: target.x, z: target.z } } : prop,
+            ),
+          };
+        }
+        return {
+          ...current,
+          players: current.players.map((player) =>
+            player.id === target.id ? { ...player, position: { ...player.position, x: target.x, z: target.z } } : player,
+          ),
+        };
+      });
     });
     return () => engine.setTransformHandler(null);
   }, []);
 
+  const activeId = active?.id ?? null;
   useEffect(() => {
-    engineRef.current?.setMoveTarget(moveMode ? active?.id ?? null : null);
-  }, [active?.id, moveMode]);
+    const engine = engineRef.current;
+    if (!engine) return;
+    if (!moveMode) {
+      engine.setMoveTarget(null);
+      return;
+    }
+    if (panel === "props" && scene?.activePropId) engine.setMoveTarget({ kind: "prop", id: scene.activePropId });
+    else if (activeId) engine.setMoveTarget({ kind: "player", id: activeId });
+    else engine.setMoveTarget(null);
+  }, [activeId, moveMode, panel, scene?.activePropId]);
 
   useEffect(() => {
     if (!message && !error) return;
@@ -388,6 +447,74 @@ export function Studio() {
     }));
   }
 
+  function adoptTexturePack(name: string, textures: PackTexture[]) {
+    const files = new Map(textures.map((texture) => [texture.key, pngBlob(texture.bytes)]));
+    applyPropTexturePack(name, files);
+    setTexturePack({ name, count: textures.length });
+  }
+
+  async function importTexturePack(files: File[], mode: "zip" | "folder") {
+    try {
+      if (mode === "zip") {
+        const file = files[0];
+        if (!file) return;
+        const result = await readResourcePack(file);
+        adoptTexturePack(result.name, result.textures);
+        await storePropTexturePack(result.name, result.textures);
+        setMessage(note("packApplied", { name: result.name, count: result.textures.length }));
+        return;
+      }
+      const entries = files.map((file) => ({
+        name: file.webkitRelativePath || file.name,
+        size: file.size,
+        arrayBuffer: () => file.arrayBuffer(),
+      }));
+      const textures = await texturesFromFolder(entries);
+      const folder = entries[0]?.name.split("/")[0] || "pack";
+      adoptTexturePack(folder, textures);
+      await storePropTexturePack(folder, textures);
+      setMessage(note("packApplied", { name: folder, count: textures.length }));
+    } catch (reason) {
+      setError(errorNote(reason, "err.packRead"));
+    }
+  }
+
+  function addProp(catalogId: string) {
+    if (!scene) return;
+    const prop = placeProp(catalogId, scene.props);
+    if (!prop) {
+      setError(note("err.propCap"));
+      return;
+    }
+    patch((current) =>
+      current.props.length >= MAX_PROPS || current.props.some((item) => item.id === prop.id)
+        ? current
+        : { ...current, props: [...current.props, prop], activePropId: prop.id },
+    );
+    setPanel("props");
+    setMessage(note("propAdded", { name: ui(locale, `prop.${catalogId}`) }));
+  }
+
+  function transformProp(
+    id: string,
+    partial: { position?: Partial<SceneProp["position"]>; rotationY?: number; scale?: number },
+  ) {
+    patch((current) => ({
+      ...current,
+      props: current.props.map((prop) =>
+        prop.id === id
+          ? {
+              ...prop,
+              ...partial,
+              position: { ...prop.position, ...partial.position },
+            }
+          : prop,
+      ),
+    }));
+  }
+
+  const readPlayhead = useCallback(() => engineRef.current?.getMotionTime(sceneRef.current?.activeId ?? "") ?? 0, []);
+
   async function lookupInto(id: string, name: string) {
     setBusy(true);
     setError(null);
@@ -541,7 +668,7 @@ export function Studio() {
       await navigator.clipboard.writeText(url);
       const uploaded = scene.players.some((player) => player.source === "upload");
       const background = Boolean(scene.backgroundImage);
-      const notes = [uploaded ? tr("shareSkin") : "", background ? tr("shareBg") : ""].filter(Boolean);
+      const notes = [uploaded ? tr("shareSkin") : "", background ? tr("shareBg") : "", scene.props.length ? tr("shareProps") : ""].filter(Boolean);
       setMessage(notes.length ? note("shareNotes", { notes: notes.join(locale === "zh" ? "，" : ", ") }) : note("shareOk"));
     } catch {
       setMessage(note("shareBar"));
@@ -587,15 +714,17 @@ export function Studio() {
           <button className="btn ghost" type="button" onClick={() => void share()}>
             {tr("share")}
           </button>
-          <button className="btn" type="button" disabled={busy} onClick={() => void download(true)}>
-            {tr("transparentPng")}
-          </button>
-          <button className="btn" type="button" disabled={busy || !scene} onClick={() => void downloadGif()}>
-            {busy ? tr("working") : tr("exportGif")}
-          </button>
-          <button className="btn primary" type="button" disabled={busy || !scene} onClick={() => void download(false)}>
-            {busy ? tr("working") : tr("download")}
-          </button>
+          <div className="export-cluster">
+            <button className="btn" type="button" disabled={busy} onClick={() => void download(true)}>
+              {tr("transparentPng")}
+            </button>
+            <button className="btn" type="button" disabled={busy || !scene} onClick={() => void downloadGif()}>
+              {busy ? tr("working") : tr("exportGif")}
+            </button>
+            <button className="btn primary" type="button" disabled={busy || !scene} onClick={() => void download(false)}>
+              {busy ? tr("working") : tr("download")}
+            </button>
+          </div>
         </div>
         <div className="top-tools">
           <div className="lang" role="group" aria-label={tr("lang")}>
@@ -646,7 +775,7 @@ export function Studio() {
         >
           {error ? <div className="toast error">{t(locale, error.key, error.vars)}</div> : message ? <div className="toast">{t(locale, message.key, message.vars)}</div> : null}
           <div className="hud">
-            <span>{moveMode ? tr("dragPlayer") : tr("orbit")}</span>
+            <span>{moveMode ? (panel === "props" && scene?.activePropId ? tr("dragProp") : tr("dragPlayer")) : tr("orbit")}</span>
             <span>{tr("pinch")}</span>
           </div>
         </div>
@@ -681,7 +810,7 @@ export function Studio() {
                     {tr("share")}
                   </button>
                 </div>
-                <div className="row" style={{ marginTop: 8 }}>
+                <div className="row export-cluster" style={{ marginTop: 8 }}>
                   <button className="btn" type="button" disabled={busy} onClick={() => void download(true)}>
                     {tr("transparentPng")}
                   </button>
@@ -693,7 +822,21 @@ export function Studio() {
                   </button>
                 </div>
               </section>
-              <section className="block">
+              <div className="tabs" role="tablist" aria-label={tr("controls")}>
+                {PANELS.map((id) => (
+                  <button
+                    key={id}
+                    type="button"
+                    role="tab"
+                    aria-selected={panel === id}
+                    className={panel === id ? "active" : ""}
+                    onClick={() => setPanel(id)}
+                  >
+                    {tr(PANEL_LABEL[id])}
+                  </button>
+                ))}
+              </div>
+              <section className="block" hidden={panel !== "scene"}>
                 <div className="section-head">
                   <h2>{tr("scene")}</h2>
                   <button className="btn ghost" type="button" onClick={resetSceneToDefault}>
@@ -740,7 +883,7 @@ export function Studio() {
                   }}
                 />
               </section>
-              <section className="block">
+              <section className="block" hidden={panel !== "cast"}>
                 <div className="section-head">
                   <h2>{tr("players")}</h2>
                   <button className="btn reset" type="button" onClick={resetActivePlayer} title={tr("resetTitle")}>
@@ -806,7 +949,7 @@ export function Studio() {
                 ) : null}
               </section>
 
-              <section className="block">
+              <section className="block" hidden={panel !== "cast"}>
                 <h2>{tr("position")}</h2>
                 <div className="row">
                   <button className={moveMode ? "chip active" : "chip"} type="button" onClick={() => setMoveMode((value) => !value)}>
@@ -848,7 +991,7 @@ export function Studio() {
                 </div>
               </section>
 
-              <section className="block">
+              <section className="block" hidden={panel !== "cast"}>
                 <div className="section-head">
                   <h2>{tr("pose")}</h2>
                   <button className="btn ghost" type="button" onClick={resetActivePlayer}>
@@ -954,7 +1097,7 @@ export function Studio() {
                 </div>
               </section>
 
-              <section className="block">
+              <section className="block" hidden={panel !== "motion"}>
                 <h2>{tr("motion")}</h2>
                 <div className="poses">
                   {CLIPS.map((clip) => (
@@ -992,7 +1135,33 @@ export function Studio() {
                     {tr("exportGif")}
                   </button>
                 </div>
-                <div className="preset-tools">
+                {active.clip !== "custom" && active.customAnimation ? (
+                  <div className="timeline-empty">
+                    <p>{tr("timelinePaused")}</p>
+                    <button className="btn primary" type="button" onClick={() => updateActive({ clip: "custom" })}>
+                      {tr("timelineResume")}
+                    </button>
+                  </div>
+                ) : (
+                  <TimelineEditor
+                    locale={locale}
+                    animation={active.clip === "custom" ? active.customAnimation : null}
+                    rest={active.joints}
+                    playerId={active.id}
+                    getPlayhead={readPlayhead}
+                    onChange={(animation) => updateActive({ clip: "custom", customAnimation: animation })}
+                    onCreate={(animation) => {
+                      updateActive({ clip: "custom", customAnimation: animation });
+                      setMessage(note("animImported", { name: animation.name }));
+                    }}
+                    onError={(error) => setError(parseNote(error) ?? note("err.animJson"))}
+                    onScrub={(time) => engineRef.current?.setScrub(active.id, time)}
+                    onScrubEnd={() => engineRef.current?.setScrub(null)}
+                  />
+                )}
+                <details className="advanced">
+                  <summary>{tr("jsonAdvanced")}</summary>
+                  <div className="preset-tools">
                   <div className="row">
                     <button className="btn" type="button" onClick={exportAnimation}>
                       {tr("exportAnimation")}
@@ -1034,9 +1203,45 @@ export function Studio() {
                     }}
                   />
                 </div>
+                </details>
               </section>
 
-              <section className="block">
+              {panel === "props" ? (
+                <PropShelf
+                  locale={locale}
+                  props={scene.props}
+                  activeId={scene.activePropId}
+                  onAdd={addProp}
+                  onSelect={(id) => patch((current) => ({ ...current, activePropId: id }))}
+                  onRemove={(id) =>
+                    patch((current) => {
+                      const props = current.props.filter((prop) => prop.id !== id);
+                      return {
+                        ...current,
+                        props,
+                        activePropId: current.activePropId === id ? (props[0]?.id ?? null) : current.activePropId,
+                      };
+                    })
+                  }
+                  onClear={() => {
+                    patch((current) => ({ ...current, props: [], activePropId: null }));
+                    setMessage(note("propsCleared"));
+                  }}
+                  onTransform={transformProp}
+                  moveMode={moveMode}
+                  onToggleMove={() => setMoveMode((value) => !value)}
+                  pack={texturePack}
+                  onImportPack={(files, mode) => void importTexturePack(files, mode)}
+                  onClearPack={() => {
+                    clearPropTexturePack();
+                    void clearStoredPropTexturePack();
+                    setTexturePack(null);
+                    setMessage(note("packCleared"));
+                  }}
+                />
+              ) : null}
+
+              <section className="block" hidden={panel !== "cast"}>
                 <h2>{tr("outer")}</h2>
                 <div className="row">
                   <button type="button" className={active.showOuter ? "chip active" : "chip"} onClick={() => updateActive({ showOuter: !active.showOuter })}>
@@ -1057,7 +1262,7 @@ export function Studio() {
                 </div>
               </section>
 
-              <section className="block">
+              <section className="block" hidden={panel !== "cast"}>
                 <h2>{tr("joints")}</h2>
                 <div className="sliders">
                   {SLIDERS.map((slider) => (
@@ -1077,7 +1282,7 @@ export function Studio() {
                 </div>
               </section>
 
-              <section className="block">
+              <section className="block" hidden={panel !== "cast"}>
                 <h2>{tr("names")}</h2>
                 <label className="field">
                   <span>{tr("nametag")}</span>
@@ -1094,7 +1299,7 @@ export function Studio() {
                 </div>
               </section>
 
-              <section className="block">
+              <section className="block" hidden={panel !== "scene"}>
                 <h2>{tr("lights")}</h2>
                 <div className="row">
                   {LIGHTS.map((id) => (
@@ -1135,7 +1340,7 @@ export function Studio() {
                 </div>
               </section>
 
-              <section className="block">
+              <section className="block" hidden={panel !== "scene"}>
                 <h2>{tr("exportSize")}</h2>
                 <div className="formats">
                   {FORMATS.map((format) => (

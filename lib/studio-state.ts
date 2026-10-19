@@ -1,9 +1,10 @@
-import { code } from "./i18n";
-import { withBasePath } from "./paths";
-import { poseById, resetPlayer } from "./poses";
-import { backgroundFitFrom, backgroundImageFrom, playerSettingsFromPayload, type SharePayload } from "./persist";
-import { DEFAULT_SCENE_LOOK, resetSceneLook } from "./stage-look";
-import type { CameraSnapshot, PlayerDraft, SceneDraft } from "./types";
+import { code } from "./i18n.ts";
+import { withBasePath } from "./paths.ts";
+import { poseById, resetPlayer } from "./poses.ts";
+import { backgroundFitFrom, backgroundImageFrom, playerSettingsFromPayload, type SharePayload } from "./persist.ts";
+import { activePropFrom, parseSceneProps } from "./props.ts";
+import { DEFAULT_SCENE_LOOK, resetSceneLook } from "./stage-look.ts";
+import type { CameraSnapshot, PlayerDraft, SceneDraft } from "./types.ts";
 
 export { resetPlayer, resetSceneLook };
 
@@ -40,6 +41,8 @@ export function defaultScene(steve: string): SceneDraft {
   return {
     players: [player],
     activeId: player.id,
+    props: [],
+    activePropId: null,
     ...DEFAULT_SCENE_LOOK,
     formatId: "youtube",
   };
@@ -89,12 +92,15 @@ export function sceneFromPayload(payload: SharePayload, steve: string, alex: str
     } satisfies PlayerDraft;
   });
   const activeId = players.some((player) => player.id === payload.activeId) ? payload.activeId : players[0].id;
+  const props = parseSceneProps(payload.props);
   return {
     camera: payload.camera,
     refetch,
     scene: {
       players,
       activeId,
+      props,
+      activePropId: activePropFrom(payload.activePropId, props),
       background: payload.background || "studio",
       backgroundImage: backgroundImageFrom(payload.backgroundImage),
       backgroundFit: backgroundFitFrom(payload.backgroundFit),
