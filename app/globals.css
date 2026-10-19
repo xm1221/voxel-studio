@@ -840,6 +840,295 @@ input[type="range"] {
   margin-top: 8px;
 }
 
+/* Prop picker: search, kind/category filters, and a windowed texture grid. */
+.prop-picker {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.prop-picker-search {
+  position: relative;
+}
+
+.prop-picker-search input {
+  width: 100%;
+  height: 40px;
+  padding: 0 38px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #ffffff;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.prop-picker-search input:focus {
+  border-color: rgba(47, 111, 237, 0.75);
+  box-shadow: 0 0 0 3px rgba(36, 87, 214, 0.12);
+}
+
+.prop-picker-search input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.prop-picker-clear {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  transform: translateY(-50%);
+}
+
+.prop-picker-clear:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.prop-picker-kinds {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 3px;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.prop-picker-kinds button {
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.prop-picker-kinds button:hover {
+  color: var(--text);
+}
+
+.prop-picker-kinds button.active {
+  background: #ffffff;
+  color: var(--text);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 2px 6px rgba(18, 35, 61, 0.08);
+}
+
+.prop-picker-cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.prop-picker-cats .chip {
+  min-height: 30px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.prop-picker-count {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.prop-picker-recent {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-2);
+}
+
+.prop-picker-recent-head {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.prop-picker-recent-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.prop-picker-recent-tile {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 4px 8px 4px 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+  color: var(--text);
+  font-size: 12px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.prop-picker-recent-tile:hover {
+  border-color: rgba(47, 111, 237, 0.45);
+  background: rgba(47, 111, 237, 0.06);
+}
+
+.prop-picker-recent-name {
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prop-picker-scroll {
+  position: relative;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.7), transparent 48px), var(--panel-2);
+  scrollbar-gutter: stable;
+}
+
+.prop-picker-canvas {
+  position: relative;
+}
+
+.prop-picker-rows {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.prop-picker-tile {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.12s ease, background 0.12s ease, transform 0.12s ease;
+}
+
+.prop-picker-tile:hover {
+  border-color: rgba(47, 111, 237, 0.35);
+  background: #fbfdff;
+}
+
+.prop-picker-tile:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(36, 87, 214, 0.28);
+}
+
+.prop-picker-tile:active {
+  transform: scale(0.97);
+}
+
+.prop-picker-icon {
+  display: block;
+  flex: none;
+  border-radius: 4px;
+  background-color: transparent;
+}
+
+.prop-picker-name {
+  width: 100%;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.25;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prop-picker-empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: 24px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.prop-picker-skeleton {
+  grid-auto-rows: 72px;
+  padding: 8px;
+}
+
+.prop-picker-tile.skeleton {
+  cursor: default;
+  box-shadow: none;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.prop-picker-skeleton-icon,
+.prop-picker-skeleton-line {
+  display: block;
+  border-radius: 6px;
+  background: linear-gradient(90deg, rgba(18, 35, 61, 0.06), rgba(18, 35, 61, 0.11), rgba(18, 35, 61, 0.06));
+  background-size: 200% 100%;
+  animation: prop-picker-shimmer 1.2s ease-in-out infinite;
+}
+
+.prop-picker-skeleton-icon {
+  width: 40px;
+  height: 40px;
+}
+
+.prop-picker-skeleton-line {
+  width: 72%;
+  height: 9px;
+}
+
+@keyframes prop-picker-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prop-picker-skeleton-icon,
+  .prop-picker-skeleton-line {
+    animation: none;
+  }
+}
+
 @media (max-width: 960px) {
   .studio {
     height: 100dvh;

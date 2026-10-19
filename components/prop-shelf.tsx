@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { PropPicker, type PickerSearchOptions } from "@/components/prop-picker";
 import {
-  CATALOG_CATEGORIES,
   LEGACY_IDS,
   catalogTextureUrl,
   entryName,
@@ -10,12 +10,14 @@ import {
   loadCatalog,
   searchCatalog,
   type CatalogEntry,
-  type PropKind,
 } from "@/lib/catalog";
 import { isMessageKey, t, type Locale, type MessageKey } from "@/lib/i18n";
 import type { SceneProp } from "@/lib/types";
 
-const FILTERS: Array<PropKind | "all"> = ["all", "block", "item", "entity"];
+/** The picker passes `null` for "every category"; the catalog search calls that "all". */
+function pickerSearch(entries: CatalogEntry[], options: PickerSearchOptions): CatalogEntry[] {
+  return searchCatalog(entries, { ...options, category: options.category ?? "all" });
+}
 
 /** Icons are 16px PNGs; draw them large and crisp instead of smoothing. */
 const iconStyle = (entry: CatalogEntry): CSSProperties => ({
@@ -58,9 +60,6 @@ export function PropShelf({
 }) {
   const tr = (key: MessageKey, vars?: Record<string, string | number>) => t(locale, key, vars);
   const active = props.find((prop) => prop.id === activeId) ?? null;
-  const [filter, setFilter] = useState<PropKind | "all">("all");
-  const [category, setCategory] = useState<string>("all");
-  const [query, setQuery] = useState("");
   const [catalog, setCatalog] = useState(() => loadedCatalog());
   const zipRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
@@ -82,19 +81,6 @@ export function PropShelf({
   }, [catalog]);
 
   const entries = useMemo(() => catalog?.entries ?? [], [catalog]);
-  const categories = useMemo(() => {
-    if (filter === "all") return [];
-    const counts = new Map<string, number>();
-    for (const entry of entries) {
-      if (entry.kind !== filter) continue;
-      counts.set(entry.category, (counts.get(entry.category) ?? 0) + 1);
-    }
-    return CATALOG_CATEGORIES[filter].filter((item) => counts.has(item.id));
-  }, [entries, filter]);
-  const shown = useMemo(
-    () => searchCatalog(entries, { query, kind: filter, category, lang: locale }).slice(0, 240),
-    [entries, query, filter, category, locale],
-  );
   const label = (entry: CatalogEntry | undefined) => entryName(entry, locale);
   const entryById = useMemo(() => new Map(entries.map((entry) => [entry.id, entry])), [entries]);
 
@@ -173,56 +159,15 @@ export function PropShelf({
           })}
         </div>
       ) : null}
-      <div className="row" role="group" aria-label={tr("props")}>
-        {FILTERS.map((kind) => (
-          <button
-            key={kind}
-            type="button"
-            className={filter === kind ? "chip active" : "chip"}
-            onClick={() => {
-              setFilter(kind);
-              setCategory("all");
-            }}
-          >
-            {tr(kind === "all" ? "propAll" : kind === "block" ? "propBlocks" : kind === "item" ? "propItems" : "propEntities")}
-          </button>
-        ))}
-      </div>
-      <div className="field">
-        <input
-          type="search"
-          value={query}
-          placeholder={tr("propSearch")}
-          aria-label={tr("propSearch")}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-      </div>
-      {categories.length > 1 ? (
-        <div className="row" role="group" aria-label={tr("propCategory")} style={{ marginTop: 8 }}>
-          <button type="button" className={category === "all" ? "chip active" : "chip"} onClick={() => setCategory("all")}>
-            {tr("propAllCategories")}
-          </button>
-          {categories.map((item) => (
-            <button key={item.id} type="button" className={category === item.id ? "chip active" : "chip"} onClick={() => setCategory(item.id)}>
-              {isMessageKey(item.key) ? tr(item.key as MessageKey) : item.id}
-            </button>
-          ))}
-        </div>
-      ) : null}
-      {shown.length ? (
-        <div className="prop-grid">
-          {shown.map((entry) => (
-            <button key={entry.id} type="button" className="prop-tile" onClick={() => onAdd(entry.id)} title={entry.id}>
-              <i className="swatch" style={iconStyle(entry)} aria-hidden />
-              <span>{label(entry)}</span>
-            </button>
-          ))}
-        </div>
-      ) : (
-        <p className="hint" style={{ marginTop: 12 }}>
-          {catalog ? tr("propNoMatches") : tr("propLoading")}
-        </p>
-      )}
+      <PropPicker
+        entries={entries}
+        loading={!catalog}
+        locale={locale}
+        tr={tr}
+        textureUrl={catalogTextureUrl}
+        onAdd={onAdd}
+        search={pickerSearch}
+      />
       {active ? (
         <div className="sliders" style={{ marginTop: 14 }}>
           <p className="hint" style={{ marginTop: 0 }}>
