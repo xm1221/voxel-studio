@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { PropShelf } from "@/components/prop-shelf";
 import { TimelineEditor } from "@/components/timeline-editor";
+import { catalogLabel, loadCatalog, subscribeCatalog } from "@/lib/catalog";
 import { createAlexSkin, createSteveSkin } from "@/lib/defaults";
 import { StudioEngine } from "@/lib/engine";
 import { LOCALE_STORAGE_KEY, code, errorNote, htmlLang, note, parseNote, readLocale, t, type Locale, type MessageKey, type Note } from "@/lib/i18n";
@@ -13,8 +14,15 @@ import { POSES } from "@/lib/poses";
 import { PRESET_STORAGE_KEY, mergePresets, newPresetId, parsePresetDocument, presetDocument, type UserPreset } from "@/lib/presets";
 import { inferModelType, loadImage, loadSkinToCanvas } from "@/lib/skin-image";
 import { clearStoredPropTexturePack, loadStoredPropTexturePack, storePropTexturePack } from "@/lib/pack-store";
-import { applyPropTexturePack, clearPropTexturePack, propTexturePack, subscribePropTextures } from "@/lib/prop-mesh";
-import { MAX_PROPS, placeProp } from "@/lib/props";
+import { setCustomAssets } from "@/lib/custom-assets";
+import type { CustomAsset } from "@/lib/custom-import";
+import { loadStoredCustomAssets, storeCustomAssets } from "@/lib/custom-store";
+import type { GizmoMode } from "@/lib/gizmo";
+import { emptyPropClip, writePropKey } from "@/lib/prop-clip";
+import { applyPropTexturePack, clearPropTexturePack, propTexturePack, setCustomTextures, subscribePropTextures } from "@/lib/prop-mesh";
+import { exportProject, parseProject } from "@/lib/project";
+import { MAX_PROPS, duplicateProp, placeProp } from "@/lib/props";
+import { gizmoTransform, movePivot, type Space } from "@/lib/transform-math";
 import { readResourcePack, texturesFromFolder, type PackTexture } from "@/lib/resource-pack";
 import { STORAGE_KEY, defaultScene, makePlayer, requestPlayer, resetPlayer, resetSceneLook, sceneFromPayload } from "@/lib/studio-state";
 import type { CameraSnapshot, Joints, PlayerDraft, SceneDraft, SceneProp } from "@/lib/types";
@@ -111,6 +119,30 @@ export function Studio() {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [panel, setPanel] = useState<PanelId>("cast");
+  const [gizmoMode, setGizmoMode] = useState<GizmoMode>("move");
+  const [gizmoSpace, setGizmoSpace] = useState<Space>("local");
+  const [gizmoSnap, setGizmoSnap] = useState(true);
+  const [selection, setSelection] = useState<string[]>([]);
+  const [catalogTick, setCatalogTick] = useState(0);
+  const [customs, setCustoms] = useState<CustomAsset[]>([]);
+  const [historyCounts, setHistoryCounts] = useState({ undo: 0, redo: 0 });
+  const historyRef = useRef<Array<{ props: SceneDraft["props"]; propClip: SceneDraft["propClip"] }>>([]);
+  const futureRef = useRef<Array<{ props: SceneDraft["props"]; propClip: SceneDraft["propClip"] }>>([]);
+  const selectionRef = useRef<string[]>([]);
+  const gestureRef = useRef<SceneDraft["props"] | null>(null);
+  const livePropsRef = useRef<SceneDraft["props"] | null>(null);
+  const panelRef = useRef<PanelId>("cast");
+  const commandsRef = useRef<{
+    undo: () => void;
+    redo: () => void;
+    duplicate: (id: string) => void;
+    remove: (id: string) => void;
+  }>({
+    undo: () => undefined,
+    redo: () => undefined,
+    duplicate: () => undefined,
+    remove: () => undefined,
+  });
 
   const [scene, setScene] = useState<SceneDraft | null>(() => {
     const skins = ensureSkins();
@@ -188,6 +220,11 @@ export function Studio() {
       return;
     }
     engineRef.current = engine;
+    // The shelf and prop meshes read the generated vanilla catalog. Load it
+    // once, then rebuild any props that were waiting on it.
+    void loadCatalog()
+      .then(() => engine.reloadProps())
+      .catch(() => undefined);
     engine.renderer.domElement.setAttribute("aria-label", t(readLocale(), "preview"));
     if (bootCamera) engine.setCamera(bootCamera);
     if (sceneRef.current) engine.sync(sceneRef.current);
@@ -260,18 +297,141 @@ export function Studio() {
     return () => engine.setTransformHandler(null);
   }, []);
 
+  useEffect(() => {
+    void loadCatalog();
+    return subscribeCatalog(() => {
+      setCatalogTick((value) => value + 1);
+      engineRef.current?.reloadProps();
+    });
+  }, []);
+
+  useEffect(() => {
+    void loadStoredCustomAssets()
+      .then((stored) => {
+        if (!stored.length) return;
+        setCustomAssets(stored);
+        setCustomTextures(Object.assign({}, ...stored.map((asset) => asset.textures)));
+        setCustoms(stored);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    engine.setPickHandler((id, shift) => {
+      setSelection((current) => (shift ? (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]) : [id]));
+      setScene((current) => (current ? { ...current, activePropId: id } : current));
+      setPanel("props");
+    });
+    engine.setGizmoHandler((event) => {
+      const current = sceneRef.current;
+      if (!current) return;
+      if (event.phase === "start") {
+        historyRef.current.push({ props: structuredClone(current.props), propClip: current.propClip ? structuredClone(current.propClip) : null });
+        if (historyRef.current.length > 40) historyRef.current.shift();
+        futureRef.current = [];
+        setHistoryCounts({ undo: historyRef.current.length, redo: 0 });
+        gestureRef.current = current.props.map(cloneProp);
+        return;
+      }
+      if (event.phase === "end") {
+        const starts = gestureRef.current;
+        const live = livePropsRef.current;
+        gestureRef.current = null;
+        livePropsRef.current = null;
+        if (!starts || !live) return;
+        if (!current.propClip?.autoKey) return;
+        let clip = current.propClip;
+        const time = engine.getMotionTime(current.activeId);
+        if (time > clip.duration) clip = { ...clip, duration: Math.min(30, time) };
+        for (const prop of live) {
+          const start = starts.find((item) => item.id === prop.id);
+          if (!start || samePropTransform(start, prop)) continue;
+          clip = writePropKey(clip, time, prop.id, { position: prop.position, rotation: prop.rotation, scale: prop.scale });
+        }
+        setScene((scene) => (scene ? { ...scene, props: live, propClip: clip } : scene));
+        return;
+      }
+      const starts = gestureRef.current;
+      if (!starts) return;
+      const selected = new Set(selectionRef.current.length ? selectionRef.current : current.activePropId ? [current.activePropId] : []);
+      const next = current.props.map((prop) => {
+        if (!selected.has(prop.id) || prop.locked) return prop;
+        const start = starts.find((item) => item.id === prop.id);
+        if (!start) return prop;
+        const transformed = gizmoTransform(start, event);
+        return { ...prop, position: transformed.position, rotation: transformed.rotation, scale: transformed.scale };
+      });
+      livePropsRef.current = next;
+      setScene((scene) => (scene ? { ...scene, props: next } : scene));
+    });
+    return () => {
+      engine.setPickHandler(null);
+      engine.setGizmoHandler(null);
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      if (panelRef.current !== "props") return;
+      const key = event.key.toLowerCase();
+      const meta = event.ctrlKey || event.metaKey;
+      if (meta && key === "z") {
+        event.preventDefault();
+        if (event.shiftKey) commandsRef.current.redo();
+        else commandsRef.current.undo();
+        return;
+      }
+      if (meta && key === "y") {
+        event.preventDefault();
+        commandsRef.current.redo();
+        return;
+      }
+      if (meta && key === "d") {
+        event.preventDefault();
+        const id = sceneRef.current?.activePropId;
+        if (id) commandsRef.current.duplicate(id);
+        return;
+      }
+      if (event.key === "Delete" || event.key === "Backspace") {
+        const id = sceneRef.current?.activePropId;
+        if (id) commandsRef.current.remove(id);
+        return;
+      }
+      if (key === "v" || key === "g") setGizmoMode("move");
+      if (key === "r") setGizmoMode("rotate");
+      if (!meta && key === "s") setGizmoMode("scale");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   const activeId = active?.id ?? null;
   useEffect(() => {
     const engine = engineRef.current;
     if (!engine) return;
-    if (!moveMode) {
+    if (!moveMode || panel === "props") {
       engine.setMoveTarget(null);
       return;
     }
-    if (panel === "props" && scene?.activePropId) engine.setMoveTarget({ kind: "prop", id: scene.activePropId });
-    else if (activeId) engine.setMoveTarget({ kind: "player", id: activeId });
+    if (activeId) engine.setMoveTarget({ kind: "player", id: activeId });
     else engine.setMoveTarget(null);
-  }, [activeId, moveMode, panel, scene?.activePropId]);
+  }, [activeId, moveMode, panel]);
+
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine || !scene) return;
+    const current = scene.props.find((prop) => prop.id === scene.activePropId);
+    engine.setGizmoOptions({
+      mode: gizmoMode,
+      space: gizmoSpace,
+      snap: gizmoSnap,
+      enabled: panel === "props" && Boolean(current && !current.hidden && !current.locked),
+    });
+  }, [gizmoMode, gizmoSnap, gizmoSpace, panel, scene]);
 
   useEffect(() => {
     if (!message && !error) return;
@@ -479,38 +639,167 @@ export function Studio() {
     }
   }
 
+  function publishHistory() {
+    setHistoryCounts({ undo: historyRef.current.length, redo: futureRef.current.length });
+  }
+
+  function rememberProps() {
+    const current = sceneRef.current;
+    if (!current) return;
+    historyRef.current.push({ props: structuredClone(current.props), propClip: current.propClip ? structuredClone(current.propClip) : null });
+    if (historyRef.current.length > 40) historyRef.current.shift();
+    futureRef.current = [];
+    publishHistory();
+  }
+
+  function undoProps() {
+    const current = sceneRef.current;
+    const prev = historyRef.current.pop();
+    if (!current || !prev) return;
+    futureRef.current.push({ props: current.props, propClip: current.propClip ?? null });
+    setScene({ ...current, props: prev.props, propClip: prev.propClip ?? null });
+    publishHistory();
+  }
+
+  function redoProps() {
+    const current = sceneRef.current;
+    const next = futureRef.current.pop();
+    if (!current || !next) return;
+    historyRef.current.push({ props: current.props, propClip: current.propClip ?? null });
+    setScene({ ...current, props: next.props, propClip: next.propClip ?? null });
+    publishHistory();
+  }
+
   function addProp(catalogId: string) {
-    if (!scene) return;
-    const prop = placeProp(catalogId, scene.props);
+    const current = sceneRef.current;
+    if (!current) return;
+    const prop = placeProp(catalogId, current.props);
     if (!prop) {
       setError(note("err.propCap"));
       return;
     }
-    patch((current) =>
-      current.props.length >= MAX_PROPS || current.props.some((item) => item.id === prop.id)
-        ? current
-        : { ...current, props: [...current.props, prop], activePropId: prop.id },
+    rememberProps();
+    patch((scene) =>
+      scene.props.length >= MAX_PROPS || scene.props.some((item) => item.id === prop.id)
+        ? scene
+        : { ...scene, props: [...scene.props, prop], activePropId: prop.id },
     );
+    setSelection([prop.id]);
     setPanel("props");
-    setMessage(note("propAdded", { name: ui(locale, `prop.${catalogId}`) }));
+    setMessage(note("propAdded", { name: catalogLabel(prop.catalogId, locale) }));
   }
 
-  function transformProp(
-    id: string,
-    partial: { position?: Partial<SceneProp["position"]>; rotationY?: number; scale?: number },
-  ) {
-    patch((current) => ({
-      ...current,
-      props: current.props.map((prop) =>
+  function removeSelected(id: string) {
+    rememberProps();
+    setSelection((current) => current.filter((item) => item !== id));
+    patch((scene) => {
+      const props = scene.props.filter((prop) => prop.id !== id);
+      return { ...scene, props, activePropId: scene.activePropId === id ? (props[0]?.id ?? null) : scene.activePropId };
+    });
+  }
+
+  function duplicateSelected(id: string) {
+    const current = sceneRef.current;
+    const prop = current?.props.find((item) => item.id === id);
+    if (!current || !prop) return;
+    const copy = duplicateProp(prop, current.props);
+    if (!copy) {
+      setError(note("err.propCap"));
+      return;
+    }
+    rememberProps();
+    patch((scene) => ({ ...scene, props: [...scene.props, copy], activePropId: copy.id }));
+    setSelection([copy.id]);
+  }
+
+  useEffect(() => {
+    selectionRef.current = selection;
+    panelRef.current = panel;
+    commandsRef.current = { undo: undoProps, redo: redoProps, duplicate: duplicateSelected, remove: removeSelected };
+  });
+
+  function transformProp(id: string, partial: { position?: Partial<SceneProp["position"]>; rotation?: Partial<SceneProp["rotation"]>; scale?: Partial<SceneProp["scale"]> }) {
+    patch((scene) => ({
+      ...scene,
+      props: scene.props.map((prop) =>
         prop.id === id
           ? {
               ...prop,
-              ...partial,
-              position: { ...prop.position, ...partial.position },
+              position: clampPosition({ ...prop.position, ...partial.position }),
+              rotation: clampRotation({ ...prop.rotation, ...partial.rotation }),
+              scale: clampScale({ ...prop.scale, ...partial.scale }),
             }
           : prop,
       ),
     }));
+  }
+
+  function keyProps() {
+    const current = sceneRef.current;
+    if (!current?.propClip?.autoKey) return;
+    let clip = current.propClip;
+    const time = engineRef.current?.getMotionTime(current.activeId) ?? 0;
+    if (time > clip.duration) clip = { ...clip, duration: Math.min(30, time) };
+    for (const prop of current.props) {
+      if (prop.id !== current.activePropId && !selectionRef.current.includes(prop.id)) continue;
+      clip = writePropKey(clip, time, prop.id, { position: prop.position, rotation: prop.rotation, scale: prop.scale });
+    }
+    setScene((scene) => (scene ? { ...scene, propClip: clip } : scene));
+  }
+
+  async function importCustom(asset: CustomAsset) {
+    const next = [...customs.filter((item) => item.id !== asset.id), asset];
+    if (next.length > 32) {
+      setError(note("err.customCap"));
+      return;
+    }
+    setCustomAssets(next);
+    setCustomTextures(Object.assign({}, ...next.map((item) => item.textures)));
+    setCustoms(next);
+    await storeCustomAssets(next);
+    addProp(asset.id);
+    setMessage(note("customAdded", { name: asset.name }));
+  }
+
+  function downloadProject() {
+    const current = sceneRef.current;
+    if (!current) return;
+    const blob = new Blob([JSON.stringify(exportProject(current, engineRef.current?.getCamera(), customs))], { type: "application/json" });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    link.download = "pixelstage-project.json";
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function importProject(file: File) {
+    try {
+      if (file.size > 24_000_000) {
+        setError(note("err.project"));
+        return;
+      }
+      const parsed = parseProject(JSON.parse(await file.text()) as unknown);
+      const skins = ensureSkins();
+      if (!parsed || !skins) {
+        setError(note("err.project"));
+        return;
+      }
+      const merged = new Map(customs.map((asset) => [asset.id, asset]));
+      for (const asset of parsed.customs) merged.set(asset.id, asset);
+      const nextCustoms = [...merged.values()];
+      setCustomAssets(nextCustoms);
+      setCustomTextures(Object.assign({}, ...nextCustoms.map((asset) => asset.textures)));
+      setCustoms(nextCustoms);
+      await storeCustomAssets(nextCustoms);
+      const next = sceneFromPayload(parsed.payload, skins.steve, skins.alex);
+      setScene(next.scene);
+      setSelection(next.scene.activePropId ? [next.scene.activePropId] : []);
+      if (next.camera) engineRef.current?.setCamera(next.camera);
+      setMessage(note("projectApplied"));
+    } catch (reason) {
+      setError(errorNote(reason, "err.project"));
+    }
   }
 
   const readPlayhead = useCallback(() => engineRef.current?.getMotionTime(sceneRef.current?.activeId ?? "") ?? 0, []);
@@ -775,7 +1064,7 @@ export function Studio() {
         >
           {error ? <div className="toast error">{t(locale, error.key, error.vars)}</div> : message ? <div className="toast">{t(locale, message.key, message.vars)}</div> : null}
           <div className="hud">
-            <span>{moveMode ? (panel === "props" && scene?.activePropId ? tr("dragProp") : tr("dragPlayer")) : tr("orbit")}</span>
+            <span>{moveMode && panel !== "props" ? tr("dragPlayer") : tr("orbit")}</span>
             <span>{tr("pinch")}</span>
           </div>
         </div>
@@ -1211,26 +1500,59 @@ export function Studio() {
                   locale={locale}
                   props={scene.props}
                   activeId={scene.activePropId}
+                  selectedIds={selection}
+                  mode={gizmoMode}
+                  space={gizmoSpace}
+                  snap={gizmoSnap}
+                  clip={scene.propClip ?? null}
+                  catalogTick={catalogTick}
+                  canUndo={historyCounts.undo > 0}
+                  canRedo={historyCounts.redo > 0}
+                  pack={texturePack}
                   onAdd={addProp}
-                  onSelect={(id) => patch((current) => ({ ...current, activePropId: id }))}
-                  onRemove={(id) =>
-                    patch((current) => {
-                      const props = current.props.filter((prop) => prop.id !== id);
-                      return {
-                        ...current,
-                        props,
-                        activePropId: current.activePropId === id ? (props[0]?.id ?? null) : current.activePropId,
-                      };
-                    })
-                  }
+                  onSelect={(id, shift) => {
+                    setSelection((current) => (shift ? (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]) : [id]));
+                    patch((current) => ({ ...current, activePropId: id }));
+                  }}
+                  onRemove={removeSelected}
                   onClear={() => {
+                    rememberProps();
+                    setSelection([]);
                     patch((current) => ({ ...current, props: [], activePropId: null }));
                     setMessage(note("propsCleared"));
                   }}
+                  onRename={(id, name) => patch((current) => ({ ...current, props: current.props.map((prop) => (prop.id === id ? { ...prop, name: name.slice(0, 48) } : prop)) }))}
+                  onToggleHidden={(id) => patch((current) => ({ ...current, props: current.props.map((prop) => (prop.id === id ? { ...prop, hidden: !prop.hidden } : prop)) }))}
+                  onToggleLocked={(id) => patch((current) => ({ ...current, props: current.props.map((prop) => (prop.id === id ? { ...prop, locked: !prop.locked } : prop)) }))}
+                  onDuplicate={duplicateSelected}
                   onTransform={transformProp}
-                  moveMode={moveMode}
-                  onToggleMove={() => setMoveMode((value) => !value)}
-                  pack={texturePack}
+                  onPivot={(id, axis, value) =>
+                    patch((current) => ({
+                      ...current,
+                      props: current.props.map((prop) => {
+                        if (prop.id !== id) return prop;
+                        const next = movePivot(prop.position, prop.pivot, prop.rotation, prop.scale, { ...prop.pivot, [axis]: value });
+                        return { ...prop, position: next.position, pivot: next.pivot };
+                      }),
+                    }))
+                  }
+                  onEditStart={rememberProps}
+                  onEditEnd={keyProps}
+                  onMode={setGizmoMode}
+                  onSpace={setGizmoSpace}
+                  onSnap={setGizmoSnap}
+                  onUndo={undoProps}
+                  onRedo={redoProps}
+                  onAutoKey={(enabled) =>
+                    patch((current) => ({
+                      ...current,
+                      propClip: enabled ? { ...(current.propClip ?? emptyPropClip()), autoKey: true } : current.propClip ? { ...current.propClip, autoKey: false } : null,
+                    }))
+                  }
+                  onImportCustom={(asset) => void importCustom(asset)}
+                  onExportProject={downloadProject}
+                  onImportProject={(file) => void importProject(file)}
+                  onError={(error) => setError(errorNote(error, "err.customRead"))}
                   onImportPack={(files, mode) => void importTexturePack(files, mode)}
                   onClearPack={() => {
                     clearPropTexturePack();
@@ -1359,6 +1681,32 @@ export function Studio() {
       </div>
     </div>
   );
+}
+
+function cloneProp(prop: SceneProp): SceneProp {
+  return { ...prop, position: { ...prop.position }, rotation: { ...prop.rotation }, scale: { ...prop.scale }, pivot: { ...prop.pivot } };
+}
+
+function samePropTransform(a: SceneProp, b: SceneProp) {
+  return a.position.x === b.position.x && a.position.y === b.position.y && a.position.z === b.position.z && a.rotation.x === b.rotation.x && a.rotation.y === b.rotation.y && a.rotation.z === b.rotation.z && a.scale.x === b.scale.x && a.scale.y === b.scale.y && a.scale.z === b.scale.z;
+}
+
+function clampPosition(position: SceneProp["position"]): SceneProp["position"] {
+  return {
+    x: Math.min(64, Math.max(-64, position.x)),
+    y: Math.min(64, Math.max(-16, position.y)),
+    z: Math.min(64, Math.max(-64, position.z)),
+  };
+}
+
+function clampRotation(rotation: SceneProp["rotation"]): SceneProp["rotation"] {
+  const clamp = (value: number) => Math.min(720, Math.max(-720, value));
+  return { x: clamp(rotation.x), y: clamp(rotation.y), z: clamp(rotation.z) };
+}
+
+function clampScale(scale: SceneProp["scale"]): SceneProp["scale"] {
+  const clamp = (value: number) => Math.min(8, Math.max(0.05, value));
+  return { x: clamp(scale.x), y: clamp(scale.y), z: clamp(scale.z) };
 }
 
 function ui(locale: Locale, key: string, vars?: Record<string, string | number>) {

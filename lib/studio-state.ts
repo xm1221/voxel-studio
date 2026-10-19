@@ -2,6 +2,7 @@ import { code } from "./i18n.ts";
 import { withBasePath } from "./paths.ts";
 import { poseById, resetPlayer } from "./poses.ts";
 import { backgroundFitFrom, backgroundImageFrom, playerSettingsFromPayload, type SharePayload } from "./persist.ts";
+import { parsePropClip } from "./prop-clip.ts";
 import { activePropFrom, parseSceneProps } from "./props.ts";
 import { DEFAULT_SCENE_LOOK, resetSceneLook } from "./stage-look.ts";
 import type { CameraSnapshot, PlayerDraft, SceneDraft } from "./types.ts";
@@ -43,6 +44,7 @@ export function defaultScene(steve: string): SceneDraft {
     activeId: player.id,
     props: [],
     activePropId: null,
+    propClip: null,
     ...DEFAULT_SCENE_LOOK,
     formatId: "youtube",
   };
@@ -101,6 +103,7 @@ export function sceneFromPayload(payload: SharePayload, steve: string, alex: str
       activeId,
       props,
       activePropId: activePropFrom(payload.activePropId, props),
+      propClip: parsePropClip(payload.propClip),
       background: payload.background || "studio",
       backgroundImage: backgroundImageFrom(payload.backgroundImage),
       backgroundFit: backgroundFitFrom(payload.backgroundFit),
