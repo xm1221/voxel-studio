@@ -282,11 +282,12 @@ function matTransformPoint(m: Mat4, p: Vec3): Vec3 {
 
 
 /**
- * Vanilla LivingEntityRenderer: scale(-1,-1,1) then translate(0, -1.501, 0).
- * In pixel space that maps model point p → (-x, 24 - y, z) with feet near y=0.
+ * Vanilla LivingEntityRenderer: scale(-1,-1,1) then translate(0, -1.501, 0),
+ * plus an extra Z flip so models face the stage camera (+Z).
+ * In pixel space: p → (-x, 24 - y, -z). Three axis flips (det -1) reverse
+ * face winding — emitCubeQuads reverses verts after this map.
  */
 function vanillaEntityWorld(p: Vec3): Vec3 {
-  // scale(-1,-1,1) then face the stage camera (+Z) with an extra Z flip.
   return [round(-p[0]), round(24 - p[1]), round(-p[2])];
 }
 
@@ -329,13 +330,14 @@ function emitCubeQuads(cube: VCube, parent: Mat4, texture: string, texW: number,
   // Each vert: x,y,z, uPix, vPix — order matches ModelPart$Polygon (CCW, outward).
   const faces: FaceSpec[] = cube.mirror
     ? [
-        // Mirrored: Mojang swaps X and revises UV winding (see CubeDump headM).
-        { face: "down", verts: [[x1, y1, z1, u2, v1], [x2, y1, z1, u1, v1], [x2, y1, z2, u1, v0], [x1, y1, z2, u2, v0]] },
-        { face: "up", verts: [[x1, y2, z2, u3, v0], [x2, y2, z2, u2, v0], [x2, y2, z1, u2, v1], [x1, y2, z1, u3, v1]] },
-        { face: "east", verts: [[x2, y2, z1, u1, v2], [x2, y2, z2, u0, v2], [x2, y1, z2, u0, v1], [x2, y1, z1, u1, v1]] },
-        { face: "north", verts: [[x1, y2, z1, u2, v2], [x2, y2, z1, u1, v2], [x2, y1, z1, u1, v1], [x1, y1, z1, u2, v1]] },
-        { face: "west", verts: [[x1, y2, z2, u3, v2], [x1, y2, z1, u2, v2], [x1, y1, z1, u2, v1], [x1, y1, z2, u3, v1]] },
-        { face: "south", verts: [[x2, y2, z2, u5, v2], [x1, y2, z2, u4, v2], [x1, y1, z2, u4, v1], [x2, y1, z2, u5, v1]] },
+        // Mirrored: after x1/x2 swap, verts match CubeDump headM (CCW outward in model space).
+        // x1 is maxX and x2 is minX here.
+        { face: "down", verts: [[x2, y1, z1, u2, v1], [x1, y1, z1, u1, v1], [x1, y1, z2, u1, v0], [x2, y1, z2, u2, v0]] },
+        { face: "up", verts: [[x2, y2, z2, u3, v0], [x1, y2, z2, u2, v0], [x1, y2, z1, u2, v1], [x2, y2, z1, u3, v1]] },
+        { face: "east", verts: [[x1, y2, z1, u1, v2], [x1, y2, z2, u0, v2], [x1, y1, z2, u0, v1], [x1, y1, z1, u1, v1]] },
+        { face: "north", verts: [[x2, y2, z1, u2, v2], [x1, y2, z1, u1, v2], [x1, y1, z1, u1, v1], [x2, y1, z1, u2, v1]] },
+        { face: "west", verts: [[x2, y2, z2, u3, v2], [x2, y2, z1, u2, v2], [x2, y1, z1, u2, v1], [x2, y1, z2, u3, v1]] },
+        { face: "south", verts: [[x1, y2, z2, u5, v2], [x2, y2, z2, u4, v2], [x2, y1, z2, u4, v1], [x1, y1, z2, u5, v1]] },
       ]
     : [
         { face: "down", verts: [[x2, y1, z2, u2, v0], [x1, y1, z2, u1, v0], [x1, y1, z1, u1, v1], [x2, y1, z1, u2, v1]] },
@@ -348,7 +350,12 @@ function emitCubeQuads(cube: VCube, parent: Mat4, texture: string, texW: number,
 
   for (const spec of faces) {
     const worldPts = spec.verts.map(([x, y, z]) => vanillaEntityWorld(matTransformPoint(parent, [x, y, z]))) as [Vec3, Vec3, Vec3, Vec3];
+    // vanillaEntityWorld flips X, Y, and Z (det = -1), which reverses winding.
+    // Reverse verts (and keep each UV glued to its vertex) so the cross-product
+    // normal points outward again and FrontSide culling can work.
     const uvs = spec.verts.map(([, , , uu, vv]) => [round(uu / texW), round(1 - vv / texH)] as Vec2) as [Vec2, Vec2, Vec2, Vec2];
+    worldPts.reverse();
+    uvs.reverse();
     const ax = worldPts[1][0] - worldPts[0][0];
     const ay = worldPts[1][1] - worldPts[0][1];
     const az = worldPts[1][2] - worldPts[0][2];
