@@ -293,7 +293,7 @@ export function Studio() {
   }, []);
 
   useEffect(() => {
-    void loadCatalog();
+    void loadCatalog().catch(() => undefined);
     return subscribeCatalog(() => {
       setCatalogTick((value) => value + 1);
       engineRef.current?.reloadProps();
