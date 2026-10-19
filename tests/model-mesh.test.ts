@@ -193,12 +193,12 @@ describe("model quads", () => {
 describe("entity ModelPart / Blockbench box UV", () => {
   it("lays out the standard cube UV regions", () => {
     assert.deepEqual(boxRegions({ u: 0, v: 0, w: 8, h: 8, d: 8 }), {
-      east: [0, 8, 8, 8],
-      west: [16, 8, 8, 8],
-      up: [8, 0, 8, 8],
-      down: [16, 0, 8, 8],
-      south: [24, 8, 8, 8],
+      west: [0, 8, 8, 8],
       north: [8, 8, 8, 8],
+      east: [16, 8, 8, 8],
+      south: [24, 8, 8, 8],
+      down: [8, 0, 8, 8],
+      up: [16, 0, 8, 8],
     });
   });
 

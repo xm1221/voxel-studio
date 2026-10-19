@@ -201,23 +201,25 @@ export function modelQuads(model: CompiledModel): ModelQuad[] {
 type BoxRegion = [number, number, number, number];
 
 /** Standard Minecraft cube UV regions: [u, v, width, height]. */
-/** Blockbench box_uv / ModelPart$Cube face regions relative to texOffs (u, v). */
+/**
+ * Mojang ModelPart$Cube UV regions (texOffs u,v). Note east/west and up/down
+ * are swapped relative to Blockbench's face_list *names*, but match the pixels
+ * ModelPart actually samples — verified against client 26.3 Cube polygons.
+ *
+ * Layout (pixel space):
+ *        [down  u+d .. u+d+w , v .. v+d]
+ *        [up    u+d+w .. u+d+2w , v .. v+d]
+ * [west u..u+d | north u+d..u+d+w | east u+d+w..u+d+w+d | south u+d+w+d..u+d+2w+d] at v+d
+ */
 export function boxRegions(box: Pick<VCube, "u" | "v" | "w" | "h" | "d">): Record<FaceName, BoxRegion> {
   const { u, v, w, h, d } = box;
   return {
-    // Matches Blockbench cube.js updateUV(box_uv) and Mojang ModelPart$Cube:
-    // east  [0, d] size [d, h]
-    // west  [d+w, d] size [d, h]
-    // up    [d+w, d] size [-w, -d]  → stored as [d, 0]..[d+w, d] with V flipped in faceUvCorners
-    // down  [d+2w, 0] size [-w, d] → stored as [d+w, 0]..[d+2w, d]
-    // south [2d+w, d] size [w, h]
-    // north [d, d] size [w, h]
-    east: [u, v + d, d, h],
-    west: [u + d + w, v + d, d, h],
-    up: [u + d, v, w, d],
-    down: [u + d + w, v, w, d],
-    south: [u + d + w + d, v + d, w, h],
+    west: [u, v + d, d, h],
     north: [u + d, v + d, w, h],
+    east: [u + d + w, v + d, d, h],
+    south: [u + d + w + d, v + d, w, h],
+    down: [u + d, v, w, d],
+    up: [u + d + w, v, w, d],
   };
 }
 
@@ -284,7 +286,8 @@ function matTransformPoint(m: Mat4, p: Vec3): Vec3 {
  * In pixel space that maps model point p → (-x, 24 - y, z) with feet near y=0.
  */
 function vanillaEntityWorld(p: Vec3): Vec3 {
-  return [round(-p[0]), round(24 - p[1]), round(p[2])];
+  // scale(-1,-1,1) then face the stage camera (+Z) with an extra Z flip.
+  return [round(-p[0]), round(24 - p[1]), round(-p[2])];
 }
 
 function cubeGrow(cube: VCube): [number, number, number] {
@@ -293,6 +296,10 @@ function cubeGrow(cube: VCube): [number, number, number] {
   return [g, g, g];
 }
 
+/**
+ * Emit six faces for one cube using ModelPart$Cube vertex order and UVs
+ * (client 26.3). Positions are in part-local space; `parent` then maps them.
+ */
 function emitCubeQuads(cube: VCube, parent: Mat4, texture: string, texW: number, texH: number, quads: ModelQuad[]) {
   const [gx, gy, gz] = cubeGrow(cube);
   let x1 = cube.x - gx;
@@ -301,49 +308,63 @@ function emitCubeQuads(cube: VCube, parent: Mat4, texture: string, texW: number,
   let x2 = cube.x + cube.w + gx;
   const y2 = cube.y + cube.h + gy;
   const z2 = cube.z + cube.d + gz;
-  // Mirror swaps the X extents (ModelPart$Cube) before building corners.
   if (cube.mirror) {
     const tmp = x1;
     x1 = x2;
     x2 = tmp;
   }
-  const from: Vec3 = [x1, y1, z1];
-  const to: Vec3 = [x2, y2, z2];
-  const regions = boxRegions(cube);
-  for (const face of FACE_NAMES) {
-    const [mu, mv, mw, mh] = regions[face];
-    // Blockbench mirror_uv: flip each face's U and swap east/west regions — regions already
-    // use the unmirrored layout; with mirrored X verts, flip U within the face.
-    let u0 = mu;
-    let u1 = mu + mw;
-    if (cube.mirror) {
-      u0 = mu + mw;
-      u1 = mu;
-    }
-    const uv: [number, number, number, number] = [u0, mv, u1, mv + mh];
-    const local = corners(face, from, to);
-    const worldPts = local.map((p) => vanillaEntityWorld(matTransformPoint(parent, p))) as [Vec3, Vec3, Vec3, Vec3];
-    // Recompute normal from transformed triangle so winding stays correct after the Y-flip.
+  const { u, v, w, h, d } = cube;
+  // Pixel-space edges along the UV strip (same as Cube constructor fstore 27..35).
+  const u0 = u;
+  const u1 = u + d;
+  const u2 = u + d + w;
+  const u3 = u + d + w + w;
+  const u4 = u + d + w + d;
+  const u5 = u + d + w + d + w;
+  const v0 = v;
+  const v1 = v + d;
+  const v2 = v + d + h;
+
+  type FaceSpec = { face: FaceName; verts: Array<[number, number, number, number, number]> };
+  // Each vert: x,y,z, uPix, vPix — order matches ModelPart$Polygon (CCW, outward).
+  const faces: FaceSpec[] = cube.mirror
+    ? [
+        // Mirrored: Mojang swaps X and revises UV winding (see CubeDump headM).
+        { face: "down", verts: [[x1, y1, z1, u2, v1], [x2, y1, z1, u1, v1], [x2, y1, z2, u1, v0], [x1, y1, z2, u2, v0]] },
+        { face: "up", verts: [[x1, y2, z2, u3, v0], [x2, y2, z2, u2, v0], [x2, y2, z1, u2, v1], [x1, y2, z1, u3, v1]] },
+        { face: "east", verts: [[x2, y2, z1, u1, v2], [x2, y2, z2, u0, v2], [x2, y1, z2, u0, v1], [x2, y1, z1, u1, v1]] },
+        { face: "north", verts: [[x1, y2, z1, u2, v2], [x2, y2, z1, u1, v2], [x2, y1, z1, u1, v1], [x1, y1, z1, u2, v1]] },
+        { face: "west", verts: [[x1, y2, z2, u3, v2], [x1, y2, z1, u2, v2], [x1, y1, z1, u2, v1], [x1, y1, z2, u3, v1]] },
+        { face: "south", verts: [[x2, y2, z2, u5, v2], [x1, y2, z2, u4, v2], [x1, y1, z2, u4, v1], [x2, y1, z2, u5, v1]] },
+      ]
+    : [
+        { face: "down", verts: [[x2, y1, z2, u2, v0], [x1, y1, z2, u1, v0], [x1, y1, z1, u1, v1], [x2, y1, z1, u2, v1]] },
+        { face: "up", verts: [[x2, y2, z1, u3, v1], [x1, y2, z1, u2, v1], [x1, y2, z2, u2, v0], [x2, y2, z2, u3, v0]] },
+        { face: "west", verts: [[x1, y1, z1, u1, v1], [x1, y1, z2, u0, v1], [x1, y2, z2, u0, v2], [x1, y2, z1, u1, v2]] },
+        { face: "north", verts: [[x2, y1, z1, u2, v1], [x1, y1, z1, u1, v1], [x1, y2, z1, u1, v2], [x2, y2, z1, u2, v2]] },
+        { face: "east", verts: [[x2, y1, z2, u3, v1], [x2, y1, z1, u2, v1], [x2, y2, z1, u2, v2], [x2, y2, z2, u3, v2]] },
+        { face: "south", verts: [[x1, y1, z2, u5, v1], [x2, y1, z2, u4, v1], [x2, y2, z2, u4, v2], [x1, y2, z2, u5, v2]] },
+      ];
+
+  for (const spec of faces) {
+    const worldPts = spec.verts.map(([x, y, z]) => vanillaEntityWorld(matTransformPoint(parent, [x, y, z]))) as [Vec3, Vec3, Vec3, Vec3];
+    const uvs = spec.verts.map(([, , , uu, vv]) => [round(uu / texW), round(1 - vv / texH)] as Vec2) as [Vec2, Vec2, Vec2, Vec2];
     const ax = worldPts[1][0] - worldPts[0][0];
     const ay = worldPts[1][1] - worldPts[0][1];
     const az = worldPts[1][2] - worldPts[0][2];
     const bx = worldPts[2][0] - worldPts[0][0];
     const by = worldPts[2][1] - worldPts[0][1];
     const bz = worldPts[2][2] - worldPts[0][2];
-    let nx = ay * bz - az * by;
-    let ny = az * bx - ax * bz;
-    let nz = ax * by - ay * bx;
+    const nx = ay * bz - az * by;
+    const ny = az * bx - ax * bz;
+    const nz = ax * by - ay * bx;
     const len = Math.hypot(nx, ny, nz) || 1;
-    nx /= len;
-    ny /= len;
-    nz /= len;
-    const uvCorners = faceUvCorners(face, uv);
     quads.push({
       positions: worldPts,
-      normal: [nx, ny, nz],
-      uvs: uvCorners.map(([uu, vv]) => [round(uu / texW), round(1 - vv / texH)] as Vec2) as [Vec2, Vec2, Vec2, Vec2],
+      normal: [nx / len, ny / len, nz / len],
+      uvs,
       texture,
-      face,
+      face: spec.face,
     });
   }
 }
