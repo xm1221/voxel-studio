@@ -1,0 +1,40 @@
+# Pixelstage
+
+Pixelstage is a Next.js Minecraft skin stage. Live site: https://tools.xm1221.cn/mcrender (base path `/mcrender`).
+
+## Project file
+
+`pixelstage.project.json` is `{ v: 1, scene, customs }`. Schema: `schema/pixelstage.project.schema.json`. 16 stage units = 1 block. Prop ids look like `o_ab12cd`. Catalog ids are `block:`, `item:`, `entity:`, a legacy short id (`stone`, `creeper`), or `custom:`.
+
+Custom PNG bytes are data URLs on `customs`. Share links keep the id and drop the bytes.
+
+## Catalog plug-in
+
+`lib/catalog.ts` exports `catalogEntries()`, `catalogEntry()`, and `installCatalog()`. Drop `public/vanilla/catalog.json` to replace the 17-item shelf. Do not hand-edit the generator, `lib/entities.ts`, or committed vanilla textures from this guide. File shape: `{ version, blocks, items, entities, entries: [{ id, kind, category, icon, en, zh, crop?, model? }] }`.
+
+## CLI
+
+`node cli/pixelstage.mjs` — commands: `init`, `validate`, `list`, `add`, `keyframe`, `export`, `import`, `render`. Details and examples: `docs/cli.md`.
+
+`add --player Notch` stores that account's skin PNG. `add --skin file.png --slim` stores a local skin. `keyframe --time 0.8 --joint rArmZ=-140,headY=10` writes the active player's clip. `render --camera 26,10,64,0,2,0` sets position and target.
+
+Player clip on `scene.players[].customAnimation` with `clip: "custom"`:
+
+```json
+{ "v": 1, "name": "Wave", "duration": 1.6, "loop": true, "keyframes": [
+  { "time": 0, "joints": { "rArmZ": 0 } },
+  { "time": 0.8, "joints": { "rArmZ": -140, "rElbow": -60 }, "cape": 8 },
+  { "time": 1.6, "joints": { "rArmZ": 0 } }
+]}
+```
+
+Joint degrees: headX -40..40, headY -55..55, bodyX -30..30, rArmX/lArmX -170..170, rArmZ -180..40, lArmZ -40..180, rElbow/lElbow -150..30, rLegX/lLegX -120..70, rKnee/lKnee -15..150. Scalars: bob -8..8, sway/roll -5..5, cape -45..45. Keys must be strictly increasing and inside duration. Camera is `scene.camera: { "p": [x,y,z], "t": [x,y,z] }`. Headless skins need `source: "upload"` and a PNG data URL.
+
+`validate` errors include a JSON pointer. `export --glb` / `--gltf` is node animation with nearest-filtered embedded PNGs. `export --bbmodel` plus `import --bbmodel` round-trips prop animation. `render` needs the Next server and Chrome; it uses the same studio engine as the page at `/render`.
+
+## Interop caveats
+
+- glTF is Y-up in stage units, not a skinned player. The player is a locator node. Prop nodes are named with their prop id.
+- Blockbench import reads animation keys for groups whose uuid equals a prop id. Geometry import of `.bbmodel` is a separate path (`customFromBbmodel`) and does not require an animation.
+- A missing vanilla PNG is replaced with a 1×1 placeholder so the file still opens. Put textures under `public/vanilla/` before export if Blender should see the real pixels.
+- Rotation snap in the studio is 15° while snap is on. Exported keys store the authored degrees.

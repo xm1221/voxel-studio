@@ -20,7 +20,9 @@ import { loadStoredCustomAssets, storeCustomAssets } from "@/lib/custom-store";
 import type { GizmoMode } from "@/lib/gizmo";
 import { emptyPropClip, writePropKey } from "@/lib/prop-clip";
 import { applyPropTexturePack, clearPropTexturePack, propTexturePack, setCustomTextures, subscribePropTextures } from "@/lib/prop-mesh";
-import { exportProject, parseProject } from "@/lib/project";
+import { projectToBbmodel, propClipFromBbmodel } from "@/lib/bbmodel-io";
+import { gltfToGlb, parseGlb, projectToGltf, propClipFromGltf } from "@/lib/gltf-io";
+import { exportProject, parseProject, type ProjectFile } from "@/lib/project";
 import { MAX_PROPS, duplicateProp, placeProp } from "@/lib/props";
 import { gizmoTransform, movePivot, type Space } from "@/lib/transform-math";
 import { readResourcePack, texturesFromFolder, type PackTexture } from "@/lib/resource-pack";
@@ -759,6 +761,80 @@ export function Studio() {
     await storeCustomAssets(next);
     addProp(asset.id);
     setMessage(note("customAdded", { name: asset.name }));
+  }
+
+  function currentProject(): ProjectFile | null {
+    const current = sceneRef.current;
+    if (!current) return null;
+    return exportProject(current, engineRef.current?.getCamera(), customs);
+  }
+
+  function downloadBlob(blob: Blob, filename: string) {
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function textureBytes(project: ProjectFile) {
+    const map = new Map<string, Uint8Array>();
+    for (const asset of project.customs) {
+      for (const [key, url] of Object.entries(asset.textures)) {
+        const match = /^data:image\/png;base64,([a-z0-9+/]+={0,2})$/i.exec(url);
+        if (!match) continue;
+        const binary = atob(match[1]);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+        map.set(key, bytes);
+      }
+    }
+    return map;
+  }
+
+  function downloadGltf() {
+    const project = currentProject();
+    if (!project) return;
+    const glb = gltfToGlb(projectToGltf(project, textureBytes(project)));
+    const copy = new Uint8Array(glb.byteLength);
+    copy.set(glb);
+    downloadBlob(new Blob([copy]), "pixelstage.glb");
+  }
+
+  function downloadBbmodel() {
+    const project = currentProject();
+    if (!project) return;
+    const urls = new Map<string, string>();
+    for (const asset of project.customs) {
+      for (const [key, url] of Object.entries(asset.textures)) urls.set(key, url);
+    }
+    downloadBlob(new Blob([JSON.stringify(projectToBbmodel(project, urls))], { type: "application/json" }), "pixelstage.bbmodel");
+  }
+
+  async function importAnimFile(file: File) {
+    const current = sceneRef.current;
+    if (!current) return;
+    const ids = current.props.map((prop) => prop.id);
+    try {
+      const name = file.name.toLowerCase();
+      let clip = null;
+      if (name.endsWith(".glb")) {
+        const parsed = parseGlb(new Uint8Array(await file.arrayBuffer()));
+        clip = parsed ? propClipFromGltf(parsed.json, parsed.bin, ids) : null;
+      } else {
+        clip = propClipFromBbmodel(JSON.parse(await file.text()) as unknown, ids);
+      }
+      if (!clip) {
+        setError(note("err.animImport"));
+        return;
+      }
+      rememberProps();
+      patch((scene) => ({ ...scene, propClip: clip }));
+      setMessage(note("animApplied"));
+    } catch {
+      setError(note("err.animImport"));
+    }
   }
 
   function downloadProject() {
@@ -1552,6 +1628,9 @@ export function Studio() {
                   onImportCustom={(asset) => void importCustom(asset)}
                   onExportProject={downloadProject}
                   onImportProject={(file) => void importProject(file)}
+                  onExportGltf={downloadGltf}
+                  onExportBbmodel={downloadBbmodel}
+                  onImportAnim={(file) => void importAnimFile(file)}
                   onError={(error) => setError(errorNote(error, "err.customRead"))}
                   onImportPack={(files, mode) => void importTexturePack(files, mode)}
                   onClearPack={() => {

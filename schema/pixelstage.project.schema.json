@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tools.xm1221.cn/mcrender/schema/pixelstage.project.schema.json",
+  "title": "Pixelstage project",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "scene", "customs"],
+  "properties": {
+    "v": { "const": 1 },
+    "scene": { "$ref": "#/$defs/scene" },
+    "customs": {
+      "type": "array",
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/custom" }
+    }
+  },
+  "$defs": {
+    "vec3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "z"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "z": { "type": "number" }
+      }
+    },
+    "scene": {
+      "type": "object",
+      "required": ["v", "players"],
+      "properties": {
+        "v": { "const": 1 },
+        "activeId": { "type": "string" },
+        "players": { "type": "array", "minItems": 1, "maxItems": 4, "items": { "$ref": "#/$defs/player" } },
+        "props": {
+          "type": "array",
+          "maxItems": 64,
+          "items": { "$ref": "#/$defs/prop" }
+        },
+        "activePropId": { "type": ["string", "null"] },
+        "propClip": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/propClip" }] },
+        "camera": { "$ref": "#/$defs/camera" },
+        "background": { "enum": ["studio", "noon", "sunset", "night", "nether", "none"] },
+        "grade": { "enum": ["clean", "hologram", "ice", "comic"] },
+        "outline": { "enum": ["none", "ink", "sticker"] },
+        "godrays": { "type": "boolean" },
+        "light": { "enum": ["soft", "hard", "neon", "moon"] },
+        "keyIntensity": { "type": "number" },
+        "formatId": { "type": "string" }
+      }
+    },
+    "camera": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["p", "t"],
+      "description": "Camera position p and look target t, each [x, y, z] in stage units. Default is p [26, 10, 64] looking at [0, 2, 0].",
+      "properties": {
+        "p": { "$ref": "#/$defs/xyz" },
+        "t": { "$ref": "#/$defs/xyz" }
+      }
+    },
+    "xyz": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": { "type": "number" }
+    },
+    "player": {
+      "type": "object",
+      "required": ["id", "name"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 16 },
+        "source": { "enum": ["builtin", "username", "upload"], "description": "Use upload with a PNG data URL so a headless render keeps the skin." },
+        "username": { "type": ["string", "null"] },
+        "model": { "enum": ["default", "slim"] },
+        "skinUrl": { "type": "string", "description": "PNG data URL when source is upload." },
+        "capeUrl": { "type": ["string", "null"] },
+        "clip": { "enum": ["none", "idle", "walk", "run", "wave", "cheer", "custom"] },
+        "clipSpeed": { "type": "number", "minimum": 0.25, "maximum": 3 },
+        "customAnimation": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/animation" }] },
+        "joints": { "$ref": "#/$defs/joints" },
+        "position": { "$ref": "#/$defs/vec3" },
+        "scale": { "type": "number", "minimum": 0.5, "maximum": 1.6 },
+        "showCape": { "type": "boolean" },
+        "showOuter": { "type": "boolean" },
+        "layerMode": { "enum": ["flat", "voxel"] },
+        "poseId": { "type": "string" },
+        "nametag": { "type": "string" },
+        "bubble": { "type": "string" }
+      }
+    },
+    "joints": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Degrees. Missing keys fall back to the rest pose when sampled.",
+      "properties": {
+        "headX": { "type": "number", "minimum": -40, "maximum": 40 },
+        "headY": { "type": "number", "minimum": -55, "maximum": 55 },
+        "bodyX": { "type": "number", "minimum": -30, "maximum": 30 },
+        "rArmX": { "type": "number", "minimum": -170, "maximum": 170 },
+        "rArmZ": { "type": "number", "minimum": -180, "maximum": 40 },
+        "rElbow": { "type": "number", "minimum": -150, "maximum": 30 },
+        "lArmX": { "type": "number", "minimum": -170, "maximum": 170 },
+        "lArmZ": { "type": "number", "minimum": -40, "maximum": 180 },
+        "lElbow": { "type": "number", "minimum": -150, "maximum": 30 },
+        "rLegX": { "type": "number", "minimum": -120, "maximum": 70 },
+        "rKnee": { "type": "number", "minimum": -15, "maximum": 150 },
+        "lLegX": { "type": "number", "minimum": -120, "maximum": 70 },
+        "lKnee": { "type": "number", "minimum": -15, "maximum": 150 }
+      }
+    },
+    "animation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "name", "duration", "loop", "keyframes"],
+      "properties": {
+        "v": { "const": 1 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 48 },
+        "duration": { "type": "number", "minimum": 0.2, "maximum": 30 },
+        "loop": { "type": "boolean" },
+        "keyframes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 240,
+          "items": { "$ref": "#/$defs/animationKeyframe" }
+        }
+      }
+    },
+    "animationKeyframe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["time", "joints"],
+      "properties": {
+        "time": { "type": "number", "minimum": 0 },
+        "joints": { "$ref": "#/$defs/joints" },
+        "bob": { "type": "number", "minimum": -8, "maximum": 8 },
+        "sway": { "type": "number", "minimum": -5, "maximum": 5 },
+        "roll": { "type": "number", "minimum": -5, "maximum": 5 },
+        "cape": { "type": "number", "minimum": -45, "maximum": 45 }
+      }
+    },
+    "prop": {
+      "type": "object",
+      "required": ["id", "catalogId", "position"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,24}$" },
+        "catalogId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 48 },
+        "position": { "$ref": "#/$defs/vec3" },
+        "rotation": { "$ref": "#/$defs/vec3" },
+        "rotationY": { "type": "number" },
+        "scale": { "oneOf": [{ "type": "number" }, { "$ref": "#/$defs/vec3" }] },
+        "pivot": { "$ref": "#/$defs/vec3" },
+        "hidden": { "type": "boolean" },
+        "locked": { "type": "boolean" }
+      }
+    },
+    "propClip": {
+      "type": "object",
+      "required": ["v", "duration", "keyframes"],
+      "properties": {
+        "v": { "const": 1 },
+        "duration": { "type": "number", "minimum": 0.2, "maximum": 30 },
+        "loop": { "type": "boolean" },
+        "autoKey": { "type": "boolean" },
+        "keyframes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["time", "values"],
+            "properties": {
+              "time": { "type": "number", "minimum": 0 },
+              "values": { "type": "object" }
+            }
+          }
+        }
+      }
+    },
+    "custom": {
+      "type": "object",
+      "required": ["id", "name", "kind", "model", "textures"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^custom:[a-z0-9_]{1,40}$" },
+        "name": { "type": "string" },
+        "kind": { "enum": ["block", "item"] },
+        "model": { "type": "object" },
+        "textures": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "pattern": "^data:image/png;base64," }
+        }
+      }
+    }
+  }
+}
