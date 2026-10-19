@@ -12,7 +12,8 @@ import {
   TextureLoader,
   type Texture,
 } from "three";
-import { catalogTextureUrl, type CatalogEntry } from "./catalog.ts";
+import { catalogEntry, catalogTextureUrl, type CatalogEntry } from "./catalog.ts";
+import { customAsset } from "./custom-assets.ts";
 import { entityDef } from "./entities.ts";
 import { animatedFrame, entityQuads, geometryFromQuads, groupQuads, itemExtrusionQuads, modelQuads, type ModelQuad } from "./model-mesh.ts";
 import type { TintKind } from "./model-types.ts";
@@ -31,6 +32,7 @@ const markerMaterial = new MeshBasicMaterial({
 
 const loader = new TextureLoader();
 const textures = new Map<string, Texture>();
+const customUrls = new Map<string, string>();
 const stageTextures = new Map<string, Texture>();
 const tintCache = new Map<TintKind, Promise<[number, number, number]>>();
 const materials = new Map<string, MeshStandardMaterial>();
@@ -80,6 +82,28 @@ function dropPropTextures() {
   materialsByTexture.clear();
   tintCache.clear();
   textureFlags.clear();
+}
+
+/** Data URLs for `custom:` texture keys. Vanilla paths stay as files. */
+export function setCustomTextures(next: Record<string, string>) {
+  customUrls.clear();
+  for (const [key, url] of Object.entries(next)) customUrls.set(key, url);
+  for (const key of [...textures.keys()]) {
+    if (!key.startsWith("custom:") && !key.startsWith("data:")) continue;
+    textures.get(key)?.dispose();
+    textures.delete(key);
+    textureFlags.delete(key);
+    const used = materialsByTexture.get(key);
+    if (!used) continue;
+    for (const material of used) {
+      material.dispose();
+      for (const [materialKey, value] of materials) {
+        if (value === material) materials.delete(materialKey);
+      }
+    }
+    materialsByTexture.delete(key);
+  }
+  for (const listener of packListeners) listener();
 }
 
 function packFileUrl(file: string) {
@@ -169,7 +193,9 @@ function applyTextureFlags(material: MeshStandardMaterial, flags: { cutout: bool
 function textureFor(file: string) {
   const cached = textures.get(file);
   if (cached) return cached;
-  const texture = loader.load(packFileUrl(file) ?? catalogTextureUrl(file), (loaded) => {
+  const custom = customUrls.get(file);
+  const url = custom ?? (file.startsWith("data:") ? file : (packFileUrl(file) ?? catalogTextureUrl(file)));
+  const texture = loader.load(url, (loaded) => {
     prepare(loaded);
     firstFrame(loaded);
     scanAlpha(file, loaded);
@@ -354,6 +380,59 @@ function addMarker(group: Group) {
   group.add(marker);
 }
 
+function addCompiledModel(parent: Group, model: NonNullable<CatalogEntry["model"]>) {
+  const mesh = meshFromQuads(modelQuads(model));
+  parent.add(mesh);
+  const layers = model.layers;
+  if (!layers?.length) return;
+  const tryUpgrade = (attempt: number) => {
+    if (upgradeGeneratedItem(mesh, layers) || attempt >= 120) return;
+    setTimeout(() => tryUpgrade(attempt + 1), 50);
+  };
+  tryUpgrade(0);
+}
+
+export function propSignature(catalogId: string) {
+  const custom = customAsset(catalogId);
+  if (custom) {
+    const bytes = Object.values(custom.textures).reduce((sum, url) => sum + url.length, 0);
+    return `custom:${custom.id}:${custom.model.elements.length}:${bytes}`;
+  }
+  const entry = catalogEntry(catalogId);
+  if (entry?.kind === "entity") return `entity:${entry.id}`;
+  if (entry?.model) return `model:${entry.id}:${entry.model.elements.length}:${entry.model.layers?.length ?? 0}`;
+  if (entry) return `entry:${entry.id}`;
+  return `missing:${catalogId}`;
+}
+
+/**
+ * Scene root for one prop. The mesh sits on a `visual` child so the gizmo
+ * pivot can slide it without moving the marker or the rotation origin.
+ */
+export function createPropGroup(catalogId: string) {
+  const root = new Group();
+  root.name = `prop-${catalogId}`;
+  const visual = new Group();
+  visual.name = "visual";
+  root.add(visual);
+  const custom = customAsset(catalogId);
+  if (custom) {
+    addCompiledModel(visual, custom.model);
+  } else {
+    const entry = catalogEntry(catalogId);
+    if (entry) {
+      const built = buildProp(entry);
+      const marker = built.getObjectByName("marker");
+      marker?.removeFromParent();
+      while (built.children.length) visual.add(built.children[0]);
+    }
+  }
+  addMarker(root);
+  root.userData.catalogId = catalogId;
+  root.userData.signature = propSignature(catalogId);
+  return root;
+}
+
 /** Build the scene mesh for a catalog entry. Unknown entries give an empty group. */
 export function buildProp(entry: CatalogEntry) {
   const group = new Group();
@@ -377,16 +456,7 @@ export function buildProp(entry: CatalogEntry) {
       group.add(mesh);
     }
   } else if (entry.model) {
-    const mesh = meshFromQuads(modelQuads(entry.model));
-    group.add(mesh);
-    const layers = entry.model.layers;
-    if (layers?.length) {
-      const tryUpgrade = (attempt: number) => {
-        if (upgradeGeneratedItem(mesh, layers) || attempt >= 120) return;
-        setTimeout(() => tryUpgrade(attempt + 1), 50);
-      };
-      tryUpgrade(0);
-    }
+    addCompiledModel(group, entry.model);
   }
   addMarker(group);
   return group;
