@@ -58,6 +58,16 @@ A Minecraft skin stage in the browser. Look up a player or drop in a skin, pose 
 9. On that same tab, Import pack takes a `.zip` or `.mcpack`, or Folder takes a directory that contains `assets/minecraft/textures/`. The stage reads the block, item, and mob textures it knows (including 1.12 `textures/blocks` and `textures/items`, and the pig and chicken `*_temperate` skins). Missing files stay vanilla. The pack is stored in this browser’s IndexedDB and is still there after a reload. Vanilla textures clears it. Share links do not contain the pack, so the other person sees vanilla textures.
 10. 复制链接 shares the pose, camera, and props. The other person will not see an uploaded skin, background image, or resource pack.
 
+## 贴图 / Textures
+
+道具和正午、下界的地面用的是 Minecraft Java **26.3** 客户端里的原版 PNG，没有重画。文件在 `public/vanilla/26.3/`，来源写在 `public/vanilla/SOURCE.md`。草方块顶部材质是原版灰度图，乘上 `colormap/grass.png` 里平原的颜色，和游戏里的染色一样。生物按原版贴图的 UV 摊开（苦力怕、猪、鸡、史莱姆），不是色块。
+
+这些贴图版权属于 Mojang。Pixelstage 不隶属 Mojang，也不拥有这些文件。它们只用来显示舞台上已经有的方块、物品和生物。
+
+Props and the noon and nether floors use unmodified PNGs from the Minecraft Java **26.3** client. Nothing was redrawn. The files live in `public/vanilla/26.3/`, and `public/vanilla/SOURCE.md` records the jar. Grass block top is the vanilla grayscale texture multiplied by the plains color in `colormap/grass.png`, the same tint the game applies. Mobs use the vanilla texture UV layout (creeper, pig, chicken, slime), not solid-color boxes.
+
+Those textures are copyright Mojang. Pixelstage is not affiliated with Mojang and does not own the files. They are used only to show the blocks, items, and mobs already on the stage.
+
 ## 动画 JSON / Animation JSON
 
 时间线改的就是这份 v1 文档：加帧、拖时间、写关节，再导出，字段和以前一样。「导出动画」下载当前这个人的自定义动画。如果正在播的是内置动作，下载的是那套动作烘焙出来的 JSON，不是滑块上的姿势。「导入动画」在「高级：JSON」里，读一个 `.json` 文件；也可以把 JSON 贴进去再按「粘贴导入」。导入只改当前选中的人，并切到以该动画命名的自定义动作。每个人各自一份。分享链接和这台浏览器的本地保存都会带上它。「恢复默认」会清掉。

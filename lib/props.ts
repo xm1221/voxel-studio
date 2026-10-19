@@ -15,19 +15,10 @@ export type BlockTexture =
   | "crafting"
   | "glass";
 
-export type PropBox = {
-  x: number;
-  y: number;
-  z: number;
-  w: number;
-  h: number;
-  d: number;
-  color: string;
-};
-
 type BlockSpec = {
   id: string;
   kind: "block";
+  /** Shelf chip only. The mesh uses the vanilla PNG named by `texture`. */
   swatch: string;
   texture: BlockTexture;
 };
@@ -35,21 +26,11 @@ type BlockSpec = {
 type BuiltSpec = {
   id: string;
   kind: "item" | "entity";
+  /** Shelf chip only. The mesh uses the vanilla item or entity PNG. */
   swatch: string;
-  boxes: PropBox[];
 };
 
 export type PropSpec = BlockSpec | BuiltSpec;
-
-const box = (x: number, y: number, z: number, w: number, h: number, d: number, color: string): PropBox => ({
-  x,
-  y,
-  z,
-  w,
-  h,
-  d,
-  color,
-});
 
 export const PROP_SPECS: PropSpec[] = [
   { id: "grass", kind: "block", swatch: "#5d9b3a", texture: "grass" },
@@ -61,110 +42,14 @@ export const PROP_SPECS: PropSpec[] = [
   { id: "tnt", kind: "block", swatch: "#d6453d", texture: "tnt" },
   { id: "crafting", kind: "block", swatch: "#8b5a2b", texture: "crafting" },
   { id: "glass", kind: "block", swatch: "#b9e4f5", texture: "glass" },
-  {
-    id: "sword",
-    kind: "item",
-    swatch: "#d7dbe2",
-    boxes: [
-      box(0, 3, 0, 2, 6, 2, "#6b4423"),
-      box(0, 7.2, 0, 5, 1.4, 2.2, "#d4a017"),
-      box(0, 16, 0, 2.4, 16, 1.2, "#e7edf4"),
-      box(0, 24.4, 0, 2.4, 1.2, 1.2, "#c5ced8"),
-    ],
-  },
-  {
-    id: "pickaxe",
-    kind: "item",
-    swatch: "#8d97a3",
-    boxes: [
-      box(0, 11, 0, 2, 20, 2, "#6b4423"),
-      box(0, 21.5, 0, 14, 3, 3, "#9aa3ad"),
-      box(-6, 23.2, 0, 4, 3, 3, "#7d868f"),
-      box(6, 23.2, 0, 4, 3, 3, "#7d868f"),
-    ],
-  },
-  {
-    id: "apple",
-    kind: "item",
-    swatch: "#d63c3c",
-    boxes: [
-      box(0, 5, 0, 8, 8, 8, "#d63c3c"),
-      box(0.6, 5.4, 1, 6, 6, 6, "#e85a4a"),
-      box(0, 9.4, 0, 1.2, 2.4, 1.2, "#6b4423"),
-      box(1.6, 10.2, 0, 3, 1.4, 2, "#3f8f32"),
-    ],
-  },
-  {
-    id: "torch",
-    kind: "item",
-    swatch: "#f0b429",
-    boxes: [
-      box(0, 6, 0, 2, 12, 2, "#6b4423"),
-      box(0, 13.2, 0, 3, 3, 3, "#f5d76e"),
-      box(0, 15.4, 0, 2, 2.2, 2, "#f08a24"),
-    ],
-  },
-  {
-    id: "creeper",
-    kind: "entity",
-    swatch: "#3a9b32",
-    boxes: [
-      box(-2, 3, -2, 4, 6, 4, "#2f7d28"),
-      box(2, 3, -2, 4, 6, 4, "#2f7d28"),
-      box(-2, 3, 2, 4, 6, 4, "#2f7d28"),
-      box(2, 3, 2, 4, 6, 4, "#2f7d28"),
-      box(0, 12, 0, 8, 12, 4, "#3a9b32"),
-      box(0, 22, 0, 8, 8, 8, "#46b03a"),
-      box(-1.6, 23.2, 4.2, 2, 2, 0.6, "#1a1a1a"),
-      box(1.6, 23.2, 4.2, 2, 2.2, 0.6, "#1a1a1a"),
-      box(0, 20.2, 4.2, 2, 3, 0.6, "#1a1a1a"),
-      box(-1.2, 18.2, 4.2, 1.4, 2, 0.6, "#1a1a1a"),
-      box(1.2, 18.2, 4.2, 1.4, 2, 0.6, "#1a1a1a"),
-    ],
-  },
-  {
-    id: "pig",
-    kind: "entity",
-    swatch: "#f0a5a2",
-    boxes: [
-      box(-3, 3, -4, 3, 6, 3, "#e08d8a"),
-      box(3, 3, -4, 3, 6, 3, "#e08d8a"),
-      box(-3, 3, 4, 3, 6, 3, "#e08d8a"),
-      box(3, 3, 4, 3, 6, 3, "#e08d8a"),
-      box(0, 9, -1, 10, 8, 16, "#f3b2ae"),
-      box(0, 11, 9, 8, 8, 8, "#f7c4c0"),
-      box(0, 9.2, 13.2, 4, 3, 2.2, "#e9899a"),
-      box(-1.6, 13.6, 13.1, 1.2, 1.2, 0.4, "#2a2a2a"),
-      box(1.6, 13.6, 13.1, 1.2, 1.2, 0.4, "#2a2a2a"),
-    ],
-  },
-  {
-    id: "chicken",
-    kind: "entity",
-    swatch: "#f4f4f4",
-    boxes: [
-      box(-1.2, 2, 0, 1.2, 4, 1.2, "#f0b429"),
-      box(1.2, 2, 0, 1.2, 4, 1.2, "#f0b429"),
-      box(0, 7, 0, 8, 8, 10, "#f7f7f7"),
-      box(0, 8, 5.2, 6, 4, 2.4, "#f4f4f4"),
-      box(0, 12, 2.4, 5, 5, 5, "#ffffff"),
-      box(0, 11.4, 5.2, 2.2, 1.4, 2.4, "#f0b429"),
-      box(0, 10.2, 5.4, 1.4, 1.6, 1.2, "#d6453d"),
-      box(1.2, 12.6, 4.6, 0.8, 0.8, 0.4, "#222222"),
-    ],
-  },
-  {
-    id: "slime",
-    kind: "entity",
-    swatch: "#67c24a",
-    boxes: [
-      box(0, 8, 0, 16, 16, 16, "#5bb85a"),
-      box(0, 8, 0, 10, 10, 10, "#8ad85a"),
-      box(-1.6, 10, 5.3, 2, 2, 0.8, "#16331a"),
-      box(1.8, 10, 5.3, 2, 2, 0.8, "#16331a"),
-      box(0, 7.4, 5.3, 3.2, 1.2, 0.8, "#16331a"),
-    ],
-  },
+  { id: "sword", kind: "item", swatch: "#d7dbe2" },
+  { id: "pickaxe", kind: "item", swatch: "#8d97a3" },
+  { id: "apple", kind: "item", swatch: "#d63c3c" },
+  { id: "torch", kind: "item", swatch: "#f0b429" },
+  { id: "creeper", kind: "entity", swatch: "#3a9b32" },
+  { id: "pig", kind: "entity", swatch: "#f0a5a2" },
+  { id: "chicken", kind: "entity", swatch: "#f4f4f4" },
+  { id: "slime", kind: "entity", swatch: "#67c24a" },
 ];
 
 const SPEC_BY_ID = new Map(PROP_SPECS.map((spec) => [spec.id, spec]));
