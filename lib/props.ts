@@ -170,10 +170,10 @@ export const PROP_SPECS: PropSpec[] = [
 const SPEC_BY_ID = new Map(PROP_SPECS.map((spec) => [spec.id, spec]));
 
 const SLOTS: Array<[number, number, number]> = [
-  [15, 0, 1],
-  [-16, 0, 6],
-  [13, 0, -14],
-  [-18, 0, -12],
+  [18, 0, 4],
+  [-20, 0, 4],
+  [6, 0, 14],
+  [9, 0, 8],
   [0, 0, 18],
   [0, 0, -20],
   [10, 0, 14],

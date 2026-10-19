@@ -12,13 +12,22 @@ import { backgroundImageFrom, decodePayload, encodePayload, toPayload } from "@/
 import { POSES } from "@/lib/poses";
 import { PRESET_STORAGE_KEY, mergePresets, newPresetId, parsePresetDocument, presetDocument, type UserPreset } from "@/lib/presets";
 import { inferModelType, loadImage, loadSkinToCanvas } from "@/lib/skin-image";
+import { clearStoredPropTexturePack, loadStoredPropTexturePack, storePropTexturePack } from "@/lib/pack-store";
+import { applyPropTexturePack, clearPropTexturePack, propTexturePack, subscribePropTextures } from "@/lib/prop-mesh";
 import { MAX_PROPS, placeProp } from "@/lib/props";
+import { readResourcePack, texturesFromFolder, type PackTexture } from "@/lib/resource-pack";
 import { STORAGE_KEY, defaultScene, makePlayer, requestPlayer, resetPlayer, resetSceneLook, sceneFromPayload } from "@/lib/studio-state";
 import type { CameraSnapshot, Joints, PlayerDraft, SceneDraft, SceneProp } from "@/lib/types";
 
 let builtinSkins: { steve: string; alex: string } | null = null;
 let bootCamera: CameraSnapshot | undefined;
 let bootRefetch: string[] = [];
+
+function pngBlob(bytes: Uint8Array) {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return new Blob([copy], { type: "image/png" });
+}
 
 function ensureSkins() {
   if (!builtinSkins && typeof document !== "undefined") {
@@ -146,6 +155,27 @@ export function Studio() {
   useEffect(() => {
     sceneRef.current = scene;
   }, [scene]);
+
+  const [texturePack, setTexturePack] = useState<{ name: string; count: number } | null>(null);
+
+  useEffect(() => subscribePropTextures(() => {
+    engineRef.current?.reloadProps();
+    setTexturePack(propTexturePack());
+  }), []);
+
+  useEffect(() => {
+    let cancel = false;
+    void loadStoredPropTexturePack()
+      .then((stored) => {
+        if (cancel || !stored) return;
+        const files = new Map(stored.textures.map((texture) => [texture.key, pngBlob(texture.bytes)]));
+        applyPropTexturePack(stored.name, files);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancel = true;
+    };
+  }, []);
 
   useEffect(() => {
     const element = viewRef.current;
@@ -415,6 +445,38 @@ export function Studio() {
       ...current,
       players: current.players.map((player) => (player.id === current.activeId ? { ...player, ...partial } : player)),
     }));
+  }
+
+  function adoptTexturePack(name: string, textures: PackTexture[]) {
+    const files = new Map(textures.map((texture) => [texture.key, pngBlob(texture.bytes)]));
+    applyPropTexturePack(name, files);
+    setTexturePack({ name, count: textures.length });
+  }
+
+  async function importTexturePack(files: File[], mode: "zip" | "folder") {
+    try {
+      if (mode === "zip") {
+        const file = files[0];
+        if (!file) return;
+        const result = await readResourcePack(file);
+        adoptTexturePack(result.name, result.textures);
+        await storePropTexturePack(result.name, result.textures);
+        setMessage(note("packApplied", { name: result.name, count: result.textures.length }));
+        return;
+      }
+      const entries = files.map((file) => ({
+        name: file.webkitRelativePath || file.name,
+        size: file.size,
+        arrayBuffer: () => file.arrayBuffer(),
+      }));
+      const textures = await texturesFromFolder(entries);
+      const folder = entries[0]?.name.split("/")[0] || "pack";
+      adoptTexturePack(folder, textures);
+      await storePropTexturePack(folder, textures);
+      setMessage(note("packApplied", { name: folder, count: textures.length }));
+    } catch (reason) {
+      setError(errorNote(reason, "err.packRead"));
+    }
   }
 
   function addProp(catalogId: string) {
@@ -1166,6 +1228,16 @@ export function Studio() {
                     setMessage(note("propsCleared"));
                   }}
                   onTransform={transformProp}
+                  moveMode={moveMode}
+                  onToggleMove={() => setMoveMode((value) => !value)}
+                  pack={texturePack}
+                  onImportPack={(files, mode) => void importTexturePack(files, mode)}
+                  onClearPack={() => {
+                    clearPropTexturePack();
+                    void clearStoredPropTexturePack();
+                    setTexturePack(null);
+                    setMessage(note("packCleared"));
+                  }}
                 />
               ) : null}
 

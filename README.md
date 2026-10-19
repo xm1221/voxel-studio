@@ -17,7 +17,7 @@ A Minecraft skin stage in the browser. Look up a player or drop in a skin, pose 
 - 关节含肘和膝，外层可以是平面或 3D。名牌和气泡，柔光 / 硬光 / 霓虹 / 月光。
 - 界面可以切中文或英文。右上角的「中 / EN」会记在这台浏览器里；没选过时，语言以 `zh` 开头用中文，否则用英文。
 - 动作可以在时间线上拖关键帧，也可以导入、导出关键帧动画 JSON。格式见下面的「动画 JSON」。
-- 道具：草方块、木头、TNT 这类方块，剑、苹果、火把，以及苦力怕、猪、鸡、史莱姆。能选中、移动，并进入 PNG、GIF 和分享链接。
+- 道具：草方块、木头、TNT 这类方块，剑、苹果、火把，以及苦力怕、猪、鸡、史莱姆。贴图来自原版 Java 26.3。能选中、移动，并进入 PNG、GIF 和分享链接。可以导入材质包替换这些贴图；包只留在这台浏览器里。
 
 
 
@@ -30,7 +30,7 @@ A Minecraft skin stage in the browser. Look up a player or drop in a skin, pose 
 - Elbows and knees, a flat or voxel outer layer, nametags and speech bubbles, and soft / hard / neon / moon light.
 - The interface is Chinese or English. The 中 / EN control in the top bar is saved in this browser. With nothing saved, a `zh` locale stays in Chinese and every other language starts in English.
 - Motion can be edited on a timeline, and imported or exported as keyframe animation JSON. The format is under Animation JSON below.
-- Props: blocks such as grass, logs, and TNT, plus a sword, apple, torch, and a creeper, pig, chicken, and slime. They can be selected and moved, and they are included in PNG, GIF, and share links.
+- Props: blocks such as grass, logs, and TNT, plus a sword, apple, torch, and a creeper, pig, chicken, and slime. Textures are the vanilla Java 26.3 files. They can be selected and moved, and they are included in PNG, GIF, and share links. A resource pack can replace those textures; the pack stays in this browser.
 
 
 
@@ -44,7 +44,8 @@ A Minecraft skin stage in the browser. Look up a player or drop in a skin, pose 
 6. 拖拽旋转，滚轮或双指缩放。头像用「头像机位」。「移动角色」在地面上拖当前这个人。
 7. 选一个尺寸后下载 PNG，或导出同比例的 GIF。透明 PNG 不带背景图。
 8. 「道具」里把方块、物品或生物放到角色旁边。选中之后用「移动角色」在地面上拖，高度和转向用滑块。
-9. 「复制链接」分享姿势、机位和道具。对方看不到你上传的皮肤和背景图。
+9. 同一页可以「导入材质包」（`.zip` / `.mcpack`）或选一个含 `assets/minecraft/textures/` 的文件夹。舞台只取它认识的方块、物品和生物贴图（也认 1.12 的 `textures/blocks`、`textures/items`，以及猪、鸡的 `*_temperate` 皮肤）。没有的文件继续用原版。包存在这台浏览器的 IndexedDB 里，刷新还在。「恢复原版」清掉它。分享链接不包含材质包，对方看到的是原版贴图。
+10. 「复制链接」分享姿势、机位和道具。对方看不到你上传的皮肤、背景图和材质包。
 
 1. Enter a Java Edition name, or upload a 64×64 PNG (legacy 64×32 works too). Steve and Alex are built in.
 2. Use 场景 to switch the ground and sky, or upload a background. Large images are scaled so the long edge is 1920px.
@@ -54,7 +55,8 @@ A Minecraft skin stage in the browser. Look up a player or drop in a skin, pose 
 6. Drag to orbit, scroll or pinch to zoom. 头像机位 frames the head. 移动角色 drags the active player on the ground.
 7. Pick a size and download a PNG, or export a GIF at the same ratio. A transparent PNG does not include the background image.
 8. In 道具, place a block, item, or mob beside the skin. Select it, then use 移动角色 to drag it on the ground. Height and turn stay on sliders.
-9. 复制链接 shares the pose, camera, and props. The other person will not see an uploaded skin or background image.
+9. On that same tab, Import pack takes a `.zip` or `.mcpack`, or Folder takes a directory that contains `assets/minecraft/textures/`. The stage reads the block, item, and mob textures it knows (including 1.12 `textures/blocks` and `textures/items`, and the pig and chicken `*_temperate` skins). Missing files stay vanilla. The pack is stored in this browser’s IndexedDB and is still there after a reload. Vanilla textures clears it. Share links do not contain the pack, so the other person sees vanilla textures.
+10. 复制链接 shares the pose, camera, and props. The other person will not see an uploaded skin, background image, or resource pack.
 
 ## 动画 JSON / Animation JSON
 

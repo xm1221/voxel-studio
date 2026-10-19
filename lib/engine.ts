@@ -28,6 +28,19 @@ import type { CameraSnapshot, Joints, SceneDraft } from "./types";
 
 export type MoveTarget = { kind: "player" | "prop"; id: string };
 
+function disposePropGroup(group: Group) {
+  const geometries = new Set<{ dispose: () => void }>();
+  const materials = new Set<Material>();
+  group.traverse((object) => {
+    if (!(object instanceof Mesh) || object.name === "marker") return;
+    geometries.add(object.geometry);
+    if (Array.isArray(object.material)) object.material.forEach((entry) => materials.add(entry));
+    else materials.add(object.material);
+  });
+  geometries.forEach((geometry) => geometry.dispose());
+  materials.forEach((material) => material.dispose());
+}
+
 type ClipSampleState = {
   joints: Joints;
   bob: number;
@@ -296,6 +309,16 @@ export class StudioEngine {
       const marker = group.getObjectByName("marker");
       if (marker) marker.visible = !this.markersHidden && prop.id === draft.activePropId;
     }
+  }
+
+  /** Drop prop meshes so the next sync rebuilds them with the current textures. */
+  reloadProps() {
+    for (const group of this.propGroups.values()) {
+      this.propRoot.remove(group);
+      disposePropGroup(group);
+    }
+    this.propGroups.clear();
+    if (this.draft) this.syncProps(this.draft);
   }
 
   private poseAll(dt: number, exactTime?: number) {

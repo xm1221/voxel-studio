@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { isMessageKey, t, type Locale, type MessageKey } from "@/lib/i18n";
 import { PROP_SPECS, type PropKind } from "@/lib/props";
 import type { SceneProp } from "@/lib/types";
@@ -16,6 +16,11 @@ export function PropShelf({
   onRemove,
   onClear,
   onTransform,
+  moveMode,
+  onToggleMove,
+  pack,
+  onImportPack,
+  onClearPack,
 }: {
   locale: Locale;
   props: SceneProp[];
@@ -24,6 +29,11 @@ export function PropShelf({
   onSelect: (id: string) => void;
   onRemove: (id: string) => void;
   onClear: () => void;
+  moveMode: boolean;
+  onToggleMove: () => void;
+  pack: { name: string; count: number } | null;
+  onImportPack: (files: File[], mode: "zip" | "folder") => void;
+  onClearPack: () => void;
   onTransform: (
     id: string,
     partial: { position?: Partial<SceneProp["position"]>; rotationY?: number; scale?: number },
@@ -32,16 +42,65 @@ export function PropShelf({
   const tr = (key: MessageKey, vars?: Record<string, string | number>) => t(locale, key, vars);
   const active = props.find((prop) => prop.id === activeId) ?? null;
   const [filter, setFilter] = useState<PropKind | "all">("all");
+  const zipRef = useRef<HTMLInputElement>(null);
+  const folderRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    folderRef.current?.setAttribute("webkitdirectory", "");
+    folderRef.current?.setAttribute("directory", "");
+  }, []);
 
   return (
     <section className="block">
       <div className="section-head">
         <h2>{tr("props")}</h2>
-        <button className="btn ghost" type="button" disabled={!props.length} onClick={onClear}>
-          {tr("propClear")}
-        </button>
+        <div className="row">
+          <button className={moveMode ? "chip active" : "chip"} type="button" disabled={!activeId} onClick={onToggleMove}>
+            {moveMode ? tr("moving") : tr("move")}
+          </button>
+          <button className="btn ghost" type="button" disabled={!props.length} onClick={onClear}>
+            {tr("propClear")}
+          </button>
+        </div>
       </div>
       <p className="hint scene-hint">{props.length ? tr("propsHint") : tr("propsEmpty")}</p>
+      <p className="hint scene-hint">{pack ? tr("packUsing", { name: pack.name, count: pack.count }) : tr("packHint")}</p>
+      <div className="row">
+        <button className="btn" type="button" onClick={() => zipRef.current?.click()}>
+          {tr("packImport")}
+        </button>
+        <button className="btn ghost" type="button" onClick={() => folderRef.current?.click()}>
+          {tr("packFolder")}
+        </button>
+        {pack ? (
+          <button className="btn ghost" type="button" onClick={onClearPack}>
+            {tr("packClear")}
+          </button>
+        ) : null}
+      </div>
+      <input
+        ref={zipRef}
+        type="file"
+        accept=".zip,.mcpack,application/zip"
+        hidden
+        aria-label={tr("packImport")}
+        onChange={(event) => {
+          const files = [...(event.target.files ?? [])];
+          event.target.value = "";
+          if (files.length) onImportPack(files, "zip");
+        }}
+      />
+      <input
+        ref={folderRef}
+        type="file"
+        multiple
+        hidden
+        aria-label={tr("packFolder")}
+        onChange={(event) => {
+          const files = [...(event.target.files ?? [])];
+          event.target.value = "";
+          if (files.length) onImportPack(files, "folder");
+        }}
+      />
       {props.length ? (
         <div className="player-list" style={{ marginBottom: 12 }}>
           {props.map((prop) => (
