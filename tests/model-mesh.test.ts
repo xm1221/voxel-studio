@@ -190,7 +190,7 @@ describe("model quads", () => {
   });
 });
 
-describe("entity boxes", () => {
+describe("entity ModelPart / Blockbench box UV", () => {
   it("lays out the standard cube UV regions", () => {
     assert.deepEqual(boxRegions({ u: 0, v: 0, w: 8, h: 8, d: 8 }), {
       east: [0, 8, 8, 8],
@@ -202,32 +202,38 @@ describe("entity boxes", () => {
     });
   });
 
-  it("builds a creeper head from one box with sheet-space UVs", () => {
+  it("keeps cow head corners on the vanilla ModelPart tree", () => {
+    const def = entityDef("entity:cow");
+    assert.ok(def);
+    const quads = entityQuads(def);
+    assert.ok(quads.length >= 6);
+    // Head pivot (0,4,-8), box (-4,-4,-6, 8,8,6). After vanilla map (-x, 24-y, z)
+    // a local corner (-4,-4,-6) → model (-4,0,-14) → world (4, 24, -14).
+    const xs = quads.flatMap((q) => q.positions.map((p) => p[0]));
+    const ys = quads.flatMap((q) => q.positions.map((p) => p[1]));
+    assert.ok(Math.min(...ys) >= -1, `feet near 0, got ${Math.min(...ys)}`);
+    assert.ok(Math.max(...ys) > 20, `cow should be taller than 20px, got ${Math.max(...ys)}`);
+    assert.ok(Math.abs((Math.min(...xs) + Math.max(...xs)) / 2) < 6);
+  });
+
+  it("does not apply the block -8 shift for entities", () => {
     const def = entityDef("entity:creeper");
     assert.ok(def);
     const quads = entityQuads(def);
-    const head = quads.slice(0, 6);
-    assert.equal(head.length, 6);
-    const up = head.find((quad) => quad.face === "up");
-    assert.ok(up);
-    // The `up` region is [u+d, v, w, d] = [8, 0, 8, 8].
-    assert.deepEqual(up.uvs, [
-      [8 / 64, 1 - 8 / 32],
-      [16 / 64, 1 - 8 / 32],
-      [16 / 64, 1 - 0 / 32],
-      [8 / 64, 1 - 0 / 32],
-    ]);
-    for (const quad of quads) assert.equal(quad.texture, "entity/creeper/creeper.png");
-    // Every box becomes six quads.
-    assert.equal(quads.length, def.boxes.length * 6);
+    const geometry = geometryFromQuads(quads, { center: "entity" });
+    const pos = geometry.getAttribute("position");
+    let minY = Infinity;
+    for (let i = 0; i < pos.count; i += 1) minY = Math.min(minY, pos.getY(i));
+    assert.ok(minY > -2 && minY < 2, `entity feet near 0, got ${minY}`);
   });
 
-  it("mirrors a box's UVs when asked", () => {
-    const def = entityDef("entity:pig");
+  it("scales wither skeletons like the vanilla renderer", () => {
+    const def = entityDef("entity:wither_skeleton");
     assert.ok(def);
-    const mirrored = entityQuads({ ...def, boxes: [{ ...def.boxes[0], mirror: true }] });
-    const unmirrored = entityQuads({ ...def, boxes: [{ ...def.boxes[0], mirror: false }] });
-    assert.deepEqual(mirrored[0].uvs, unmirrored[0].uvs.slice().reverse());
+    assert.equal(def.scale, 1.2);
+    const quads = entityQuads(def);
+    const ys = quads.flatMap((q) => q.positions.map((p) => p[1]));
+    assert.ok(Math.max(...ys) > 28, `wither skeleton should be tall, got ${Math.max(...ys)}`);
   });
 });
 

@@ -294,9 +294,9 @@ function materialFor(file: string, tint?: TintKind) {
 }
 
 /** One mesh with per-texture groups and a matching material array. */
-function meshFromQuads(quads: ModelQuad[]) {
+function meshFromQuads(quads: ModelQuad[], center: "block" | "entity" = "block") {
   const groups = groupQuads(quads);
-  const geometry = geometryFromQuads(groups.flatMap((group) => group.quads));
+  const geometry = geometryFromQuads(groups.flatMap((group) => group.quads), { center });
   let start = 0;
   const materialsForGroups = groups.map((group, index) => {
     geometry.addGroup(start, group.quads.length * 6, index);
@@ -351,7 +351,13 @@ export function buildProp(entry: CatalogEntry) {
   group.name = `prop-${entry.id}`;
   if (entry.kind === "entity") {
     const def = entityDef(entry.id);
-    if (def) group.add(meshFromQuads(entityQuads(def)));
+    if (def) {
+      const mesh = meshFromQuads(entityQuads(def), "entity");
+      // Vanilla models face -Z after the renderer flip; turn them toward the stage camera (+Z).
+      mesh.rotation.y = Math.PI;
+      if (def.translucent) mesh.castShadow = false;
+      group.add(mesh);
+    }
   } else if (entry.model) {
     const mesh = meshFromQuads(modelQuads(entry.model));
     group.add(mesh);

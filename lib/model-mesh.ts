@@ -1,5 +1,5 @@
 import { BufferAttribute, BufferGeometry } from "three";
-import type { EntityBox, EntityDef } from "./entities.ts";
+import type { EntityDef, VCube, VPart } from "./entities.ts";
 import type { CompiledElement, CompiledFace, CompiledModel, CompiledRotation, FaceName, TintKind } from "./model-types.ts";
 import { FACE_NAMES } from "./model-types.ts";
 
@@ -201,9 +201,17 @@ export function modelQuads(model: CompiledModel): ModelQuad[] {
 type BoxRegion = [number, number, number, number];
 
 /** Standard Minecraft cube UV regions: [u, v, width, height]. */
-export function boxRegions(box: Pick<EntityBox, "u" | "v" | "w" | "h" | "d">): Record<FaceName, BoxRegion> {
+/** Blockbench box_uv / ModelPart$Cube face regions relative to texOffs (u, v). */
+export function boxRegions(box: Pick<VCube, "u" | "v" | "w" | "h" | "d">): Record<FaceName, BoxRegion> {
   const { u, v, w, h, d } = box;
   return {
+    // Matches Blockbench cube.js updateUV(box_uv) and Mojang ModelPart$Cube:
+    // east  [0, d] size [d, h]
+    // west  [d+w, d] size [d, h]
+    // up    [d+w, d] size [-w, -d]  → stored as [d, 0]..[d+w, d] with V flipped in faceUvCorners
+    // down  [d+2w, 0] size [-w, d] → stored as [d+w, 0]..[d+2w, d]
+    // south [2d+w, d] size [w, h]
+    // north [d, d] size [w, h]
     east: [u, v + d, d, h],
     west: [u + d + w, v + d, d, h],
     up: [u + d, v, w, d],
@@ -213,60 +221,170 @@ export function boxRegions(box: Pick<EntityBox, "u" | "v" | "w" | "h" | "d">): R
   };
 }
 
-function rotateAroundCenter(point: Vec3, center: Vec3, spin: NonNullable<EntityBox["spin"]>): Vec3 {
-  let [x, y, z] = point;
-  const [cx, cy, cz] = center;
-  x -= cx;
-  y -= cy;
-  z -= cz;
-  const apply = (angle: number | undefined, axis: "x" | "y" | "z") => {
-    if (!angle) return;
-    const rad = (angle * Math.PI) / 180;
-    const c = Math.cos(rad);
-    const s = Math.sin(rad);
-    if (axis === "x") [y, z] = [y * c - z * s, y * s + z * c];
-    else if (axis === "y") [x, z] = [x * c + z * s, -x * s + z * c];
-    else [x, y] = [x * c - y * s, x * s + y * c];
-  };
-  apply(spin.x, "x");
-  apply(spin.y, "y");
-  apply(spin.z, "z");
-  return [round(x + cx), round(y + cy), round(z + cz)];
+type Mat4 = Float64Array; // column-major 4x4
+
+function matIdentity(): Mat4 {
+  const m = new Float64Array(16);
+  m[0] = m[5] = m[10] = m[15] = 1;
+  return m;
 }
 
-function rotateBoxNormal(normal: Vec3, spin: EntityBox["spin"]): Vec3 {
-  if (!spin || (!spin.x && !spin.y && !spin.z)) return normal;
-  const rotated = rotateAroundCenter(normal, [0, 0, 0], spin);
-  return [round(rotated[0]), round(rotated[1]), round(rotated[2])];
+function matMul(a: Mat4, b: Mat4): Mat4 {
+  const out = new Float64Array(16);
+  for (let c = 0; c < 4; c += 1) {
+    for (let r = 0; r < 4; r += 1) {
+      out[c * 4 + r] =
+        a[0 * 4 + r] * b[c * 4 + 0] +
+        a[1 * 4 + r] * b[c * 4 + 1] +
+        a[2 * 4 + r] * b[c * 4 + 2] +
+        a[3 * 4 + r] * b[c * 4 + 3];
+    }
+  }
+  return out;
 }
 
-/** Quads for an entity box model, using the standard cube UV layout. */
+function matTranslate(x: number, y: number, z: number): Mat4 {
+  const m = matIdentity();
+  m[12] = x;
+  m[13] = y;
+  m[14] = z;
+  return m;
+}
+
+/** Vanilla ModelPart: Quaternionf.rotationZYX(zRot, yRot, xRot). */
+function matRotationZYX(xRot: number, yRot: number, zRot: number): Mat4 {
+  const cx = Math.cos(xRot), sx = Math.sin(xRot);
+  const cy = Math.cos(yRot), sy = Math.sin(yRot);
+  const cz = Math.cos(zRot), sz = Math.sin(zRot);
+  const m = matIdentity();
+  m[0] = cy * cz;
+  m[1] = cy * sz;
+  m[2] = -sy;
+  m[4] = sx * sy * cz - cx * sz;
+  m[5] = sx * sy * sz + cx * cz;
+  m[6] = sx * cy;
+  m[8] = cx * sy * cz + sx * sz;
+  m[9] = cx * sy * sz - sx * cz;
+  m[10] = cx * cy;
+  return m;
+}
+
+function matTransformPoint(m: Mat4, p: Vec3): Vec3 {
+  const x = p[0], y = p[1], z = p[2];
+  return [
+    round(m[0] * x + m[4] * y + m[8] * z + m[12]),
+    round(m[1] * x + m[5] * y + m[9] * z + m[13]),
+    round(m[2] * x + m[6] * y + m[10] * z + m[14]),
+  ];
+}
+
+
+/**
+ * Vanilla LivingEntityRenderer: scale(-1,-1,1) then translate(0, -1.501, 0).
+ * In pixel space that maps model point p → (-x, 24 - y, z) with feet near y=0.
+ */
+function vanillaEntityWorld(p: Vec3): Vec3 {
+  return [round(-p[0]), round(24 - p[1]), round(p[2])];
+}
+
+function cubeGrow(cube: VCube): [number, number, number] {
+  if (cube.grow) return cube.grow;
+  const g = cube.inflate ?? 0;
+  return [g, g, g];
+}
+
+function emitCubeQuads(cube: VCube, parent: Mat4, texture: string, texW: number, texH: number, quads: ModelQuad[]) {
+  const [gx, gy, gz] = cubeGrow(cube);
+  let x1 = cube.x - gx;
+  const y1 = cube.y - gy;
+  const z1 = cube.z - gz;
+  let x2 = cube.x + cube.w + gx;
+  const y2 = cube.y + cube.h + gy;
+  const z2 = cube.z + cube.d + gz;
+  // Mirror swaps the X extents (ModelPart$Cube) before building corners.
+  if (cube.mirror) {
+    const tmp = x1;
+    x1 = x2;
+    x2 = tmp;
+  }
+  const from: Vec3 = [x1, y1, z1];
+  const to: Vec3 = [x2, y2, z2];
+  const regions = boxRegions(cube);
+  for (const face of FACE_NAMES) {
+    const [mu, mv, mw, mh] = regions[face];
+    // Blockbench mirror_uv: flip each face's U and swap east/west regions — regions already
+    // use the unmirrored layout; with mirrored X verts, flip U within the face.
+    let u0 = mu;
+    let u1 = mu + mw;
+    if (cube.mirror) {
+      u0 = mu + mw;
+      u1 = mu;
+    }
+    const uv: [number, number, number, number] = [u0, mv, u1, mv + mh];
+    const local = corners(face, from, to);
+    const worldPts = local.map((p) => vanillaEntityWorld(matTransformPoint(parent, p))) as [Vec3, Vec3, Vec3, Vec3];
+    // Recompute normal from transformed triangle so winding stays correct after the Y-flip.
+    const ax = worldPts[1][0] - worldPts[0][0];
+    const ay = worldPts[1][1] - worldPts[0][1];
+    const az = worldPts[1][2] - worldPts[0][2];
+    const bx = worldPts[2][0] - worldPts[0][0];
+    const by = worldPts[2][1] - worldPts[0][1];
+    const bz = worldPts[2][2] - worldPts[0][2];
+    let nx = ay * bz - az * by;
+    let ny = az * bx - ax * bz;
+    let nz = ax * by - ay * bx;
+    const len = Math.hypot(nx, ny, nz) || 1;
+    nx /= len;
+    ny /= len;
+    nz /= len;
+    const uvCorners = faceUvCorners(face, uv);
+    quads.push({
+      positions: worldPts,
+      normal: [nx, ny, nz],
+      uvs: uvCorners.map(([uu, vv]) => [round(uu / texW), round(1 - vv / texH)] as Vec2) as [Vec2, Vec2, Vec2, Vec2],
+      texture,
+      face,
+    });
+  }
+}
+
+function walkPart(part: VPart, parent: Mat4, def: EntityDef, quads: ModelQuad[]) {
+  const pivot = part.pivot ?? [0, 0, 0];
+  const rot = part.rot ?? [0, 0, 0];
+  // ModelPart.translateAndRotate: translate by pivot, then rotationZYX(z,y,x).
+  const local = matMul(matTranslate(pivot[0], pivot[1], pivot[2]), matRotationZYX(rot[0], rot[1], rot[2]));
+  const matrix = matMul(parent, local);
+  const texture = part.texture ?? def.texture;
+  for (const cube of part.cubes ?? []) {
+    emitCubeQuads(cube, matrix, texture, def.texW, def.texH, quads);
+  }
+  for (const child of Object.values(part.children ?? {})) {
+    walkPart(child, matrix, def, quads);
+  }
+}
+
+/**
+ * Build entity quads from a Blockbench / ModelPart tree.
+ * Positions are in pixel units, Y-up, feet near y=0 (vanilla renderer map).
+ * Does NOT apply the block-model -8 centering shift — callers must use
+ * geometryFromQuads(..., { center: "entity" }).
+ */
 export function entityQuads(def: EntityDef): ModelQuad[] {
   const quads: ModelQuad[] = [];
-  const texW = def.texW || 64;
-  const texH = def.texH || 32;
-  for (const box of def.boxes) {
-    const inflate = box.inflate ?? 0;
-    const from: Vec3 = [box.x - box.w / 2 - inflate, box.y - box.h / 2 - inflate, box.z - box.d / 2 - inflate];
-    const to: Vec3 = [box.x + box.w / 2 + inflate, box.y + box.h / 2 + inflate, box.z + box.d / 2 + inflate];
-    const center: Vec3 = [box.x, box.y, box.z];
-    const regions = boxRegions(box);
-    for (const face of FACE_NAMES) {
-      const [mu, mv, mw, mh] = regions[face];
-      let uv: [number, number, number, number] = [mu, mv, mu + mw, mv + mh];
-      if (box.mirror) {
-        // Mirror horizontally inside the face's own region.
-        uv = [mu + mw, mv, mu, mv + mh];
-      }
-      const points = corners(face, from, to).map((point) => (box.spin ? rotateAroundCenter(point, center, box.spin) : point)) as [Vec3, Vec3, Vec3, Vec3];
-      const uvCorners = faceUvCorners(face, uv);
-      quads.push({
-        positions: points,
-        normal: rotateBoxNormal(FACE_NORMALS[face], box.spin),
-        uvs: uvCorners.map(([u, v]) => [round(u / texW), round(1 - v / texH)] as Vec2) as [Vec2, Vec2, Vec2, Vec2],
-        texture: box.texture ?? def.texture,
-        face,
-      });
+  walkPart(def.root, matIdentity(), def, quads);
+  const scale = def.scale ?? 1;
+  if (scale !== 1) {
+    for (const quad of quads) {
+      quad.positions = quad.positions.map((p) => [round(p[0] * scale), round(p[1] * scale), round(p[2] * scale)] as Vec3) as [Vec3, Vec3, Vec3, Vec3];
+    }
+  }
+  // Ground-align: models bake different root pivots (ghast y=-84, wither skeleton y≈-4.8).
+  // After the vanilla scale(-1,-1,1)+translate map, shift so the lowest vertex sits at y=0.
+  let minY = Infinity;
+  for (const quad of quads) for (const p of quad.positions) minY = Math.min(minY, p[1]);
+  if (Number.isFinite(minY) && minY !== 0) {
+    for (const quad of quads) {
+      quad.positions = quad.positions.map((p) => [p[0], round(p[1] - minY), p[2]] as Vec3) as [Vec3, Vec3, Vec3, Vec3];
     }
   }
   return quads;
@@ -295,7 +413,8 @@ export function groupQuads(quads: readonly ModelQuad[]): QuadGroup[] {
  * Non-indexed triangles for one or more quads. Model space 0..16 maps to world
  * space with the block centered on x/z and its bottom at y=0.
  */
-export function geometryFromQuads(quads: readonly ModelQuad[]): BufferGeometry {
+export function geometryFromQuads(quads: readonly ModelQuad[], options?: { center?: "block" | "entity" }): BufferGeometry {
+  const shift = options?.center === "entity" ? 0 : 8;
   const positions = new Float32Array(quads.length * 18);
   const normals = new Float32Array(quads.length * 18);
   const uvs = new Float32Array(quads.length * 12);
@@ -304,9 +423,9 @@ export function geometryFromQuads(quads: readonly ModelQuad[]): BufferGeometry {
     order.forEach((corner, slot) => {
       const p = quad.positions[corner];
       const at = index * 18 + slot * 3;
-      positions[at] = p[0] - 8;
+      positions[at] = p[0] - shift;
       positions[at + 1] = p[1];
-      positions[at + 2] = p[2] - 8;
+      positions[at + 2] = p[2] - shift;
       normals[at] = quad.normal[0];
       normals[at + 1] = quad.normal[1];
       normals[at + 2] = quad.normal[2];

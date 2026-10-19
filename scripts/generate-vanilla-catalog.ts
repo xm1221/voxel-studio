@@ -376,9 +376,11 @@ async function main() {
 
   for (const entity of ENTITIES) {
     used.add(entity.texture);
-    for (const box of entity.boxes) {
-      if (box.texture) used.add(box.texture);
-    }
+    const visit = (part: { texture?: string; children?: Record<string, unknown> }) => {
+      if (part.texture) used.add(part.texture);
+      for (const child of Object.values(part.children ?? {})) visit(child as typeof part);
+    };
+    visit(entity.root);
     entries.push({
       id: `entity:${entity.id}`,
       kind: "entity",
