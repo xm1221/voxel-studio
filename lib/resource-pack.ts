@@ -81,6 +81,12 @@ export function classifyPackPath(path: string): { key: PropTextureKey; rank: num
   return ALIASES[rest] ?? null;
 }
 
+/** Catalog files the pack did not replace. The mesh loads the bundled vanilla PNG for each of these. */
+export function vanillaFallbackKeys(textures: PackTexture[]): PropTextureKey[] {
+  const present = new Set(textures.map((texture) => texture.key));
+  return PROP_TEXTURE_KEYS.filter((key) => !present.has(key));
+}
+
 export function texturesFromPackFiles(entries: Array<{ path: string; bytes: Uint8Array }>): PackTexture[] {
   const best = new Map<PropTextureKey, { rank: number; bytes: Uint8Array }>();
   for (const entry of entries) {

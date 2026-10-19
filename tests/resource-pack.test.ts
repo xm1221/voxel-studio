@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { crc32, deflateRawSync } from "node:zlib";
 import { toPayload } from "../lib/persist.ts";
-import { readResourcePack, texturesFromPackFiles } from "../lib/resource-pack.ts";
+import { readResourcePack, texturesFromPackFiles, vanillaFallbackKeys } from "../lib/resource-pack.ts";
 import { defaultScene } from "../lib/studio-state.ts";
 import { readZip } from "../lib/unzip.ts";
 
@@ -98,6 +98,45 @@ describe("resource pack textures", () => {
     assert.deepEqual([...byKey.keys()].sort(), ["block/grass_block_side.png", "block/stone.png", "entity/pig.png"]);
     assert.equal(byKey.get("entity/pig.png")?.at(-1), 9);
     assert.equal(byKey.get("block/stone.png")?.[0], 0x89);
+  });
+
+  it("keeps vanilla for every catalog texture the pack does not include", () => {
+    const textures = texturesFromPackFiles([
+      { path: "MyPack/assets/minecraft/textures/block/dirt.png", bytes: PNG },
+      { path: "MyPack/assets/minecraft/textures/block/crafting_table_front.png", bytes: PNG },
+      { path: "MyPack/assets/minecraft/textures/item/diamond_sword.png", bytes: PNG },
+      { path: "MyPack/assets/minecraft/textures/item/apple.png", bytes: PNG },
+      { path: "MyPack/assets/minecraft/textures/block/torch.png", bytes: PNG },
+      { path: "MyPack/assets/minecraft/textures/entity/creeper/creeper.png", bytes: PNG },
+      { path: "MyPack/assets/minecraft/textures/entity/slime/slime.png", bytes: PNG },
+      { path: "MyPack/assets/minecraft/textures/misc/unknown.png", bytes: PNG },
+    ]);
+    const present = textures.map((texture) => texture.key).sort();
+    assert.deepEqual(present, [
+      "block/crafting_table_front.png",
+      "block/dirt.png",
+      "block/torch.png",
+      "entity/creeper.png",
+      "entity/slime.png",
+      "item/apple.png",
+      "item/diamond_sword.png",
+    ]);
+    const fallback = vanillaFallbackKeys(textures);
+    for (const key of [
+      "block/grass_block_side.png",
+      "block/stone.png",
+      "block/oak_log.png",
+      "block/oak_planks.png",
+      "block/sand.png",
+      "block/tnt_side.png",
+      "block/glass.png",
+      "item/diamond_pickaxe.png",
+      "entity/pig.png",
+      "entity/chicken.png",
+    ]) {
+      assert.equal(fallback.includes(key), true);
+      assert.equal(present.includes(key), false);
+    }
   });
 
   it("rejects a file that is not a zip, an empty pack, and a pack over the size cap", async () => {
