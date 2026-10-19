@@ -1,7 +1,11 @@
 import { code } from "./i18n.ts";
 import { readZip } from "./unzip.ts";
 
-/** Files the prop meshes sample. A pack replaces these and leaves the rest on vanilla. */
+/**
+ * Files the stage floors always use. Any other PNG under textures/block,
+ * textures/item, textures/entity, or textures/colormap is also accepted, keyed
+ * by its real jar path (for example `entity/pig/pig_temperate.png`).
+ */
 export const PROP_TEXTURE_KEYS = [
   "block/grass_block_side.png",
   "block/grass_block_top.png",
@@ -22,18 +26,21 @@ export const PROP_TEXTURE_KEYS = [
   "item/diamond_sword.png",
   "item/diamond_pickaxe.png",
   "item/apple.png",
-  "entity/creeper.png",
-  "entity/pig.png",
-  "entity/chicken.png",
-  "entity/slime.png",
+  "entity/creeper/creeper.png",
+  "entity/pig/pig_temperate.png",
+  "entity/chicken/chicken_temperate.png",
+  "entity/slime/slime.png",
   "colormap/grass.png",
 ] as const;
 
-export type PropTextureKey = (typeof PROP_TEXTURE_KEYS)[number];
+/** Any texture path under the four accepted roots. */
+export type PropTextureKey = string;
 
 const KEYS = new Set<string>(PROP_TEXTURE_KEYS);
 
-/** Older pack layouts, and 1.21 mob skins, mapped onto the keys above. Higher rank wins. */
+const TEXTURE_ROOTS = new Set(["block", "item", "entity", "colormap"]);
+
+/** Older pack layouts mapped onto the real jar paths. Higher rank wins. */
 const ALIASES: Record<string, { key: PropTextureKey; rank: number }> = {
   "blocks/grass_side.png": { key: "block/grass_block_side.png", rank: 40 },
   "blocks/grass_top.png": { key: "block/grass_block_top.png", rank: 40 },
@@ -54,12 +61,14 @@ const ALIASES: Record<string, { key: PropTextureKey; rank: number }> = {
   "items/diamond_sword.png": { key: "item/diamond_sword.png", rank: 40 },
   "items/diamond_pickaxe.png": { key: "item/diamond_pickaxe.png", rank: 40 },
   "items/apple.png": { key: "item/apple.png", rank: 40 },
-  "entity/creeper/creeper.png": { key: "entity/creeper.png", rank: 80 },
-  "entity/slime/slime.png": { key: "entity/slime.png", rank: 80 },
-  "entity/pig/pig.png": { key: "entity/pig.png", rank: 80 },
-  "entity/pig/pig_temperate.png": { key: "entity/pig.png", rank: 50 },
-  "entity/chicken/chicken.png": { key: "entity/chicken.png", rank: 80 },
-  "entity/chicken/chicken_temperate.png": { key: "entity/chicken.png", rank: 50 },
+  // Flat, pre-1.21.4 entity sheets.
+  "entity/creeper.png": { key: "entity/creeper/creeper.png", rank: 80 },
+  "entity/slime.png": { key: "entity/slime/slime.png", rank: 80 },
+  "entity/pig.png": { key: "entity/pig/pig_temperate.png", rank: 80 },
+  "entity/chicken.png": { key: "entity/chicken/chicken_temperate.png", rank: 80 },
+  // The old temperate names, still seen in packs.
+  "entity/pig/pig.png": { key: "entity/pig/pig_temperate.png", rank: 50 },
+  "entity/chicken/chicken.png": { key: "entity/chicken/chicken_temperate.png", rank: 50 },
 };
 
 export const MAX_PACK_BYTES = 256 * 1024 * 1024;
@@ -77,8 +86,12 @@ export function classifyPackPath(path: string): { key: PropTextureKey; rank: num
   const at = normalized.lastIndexOf(marker);
   if (at < 0) return null;
   const rest = normalized.slice(at + marker.length);
-  if (KEYS.has(rest)) return { key: rest as PropTextureKey, rank: 100 };
-  return ALIASES[rest] ?? null;
+  if (!rest.endsWith(".png")) return null;
+  const alias = ALIASES[rest];
+  if (alias) return alias;
+  const root = rest.slice(0, rest.indexOf("/"));
+  if (!TEXTURE_ROOTS.has(root)) return null;
+  return { key: rest, rank: KEYS.has(rest) ? 100 : 90 };
 }
 
 /** Catalog files the pack did not replace. The mesh loads the bundled vanilla PNG for each of these. */

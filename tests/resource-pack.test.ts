@@ -95,8 +95,9 @@ describe("resource pack textures", () => {
     assert.equal(entries.length, 6);
     const textures = texturesFromPackFiles(entries.map((entry) => ({ path: entry.name, bytes: entry.bytes })));
     const byKey = new Map(textures.map((texture) => [texture.key, texture.bytes]));
-    assert.deepEqual([...byKey.keys()].sort(), ["block/grass_block_side.png", "block/stone.png", "entity/pig.png"]);
-    assert.equal(byKey.get("entity/pig.png")?.at(-1), 9);
+    assert.deepEqual([...byKey.keys()].sort(), ["block/grass_block_side.png", "block/stone.png", "entity/pig/pig_temperate.png"]);
+    // Both paths land on the real jar path; the modern one outranks the legacy alias.
+    assert.equal(byKey.get("entity/pig/pig_temperate.png")?.at(-1), 4);
     assert.equal(byKey.get("block/stone.png")?.[0], 0x89);
   });
 
@@ -116,8 +117,8 @@ describe("resource pack textures", () => {
       "block/crafting_table_front.png",
       "block/dirt.png",
       "block/torch.png",
-      "entity/creeper.png",
-      "entity/slime.png",
+      "entity/creeper/creeper.png",
+      "entity/slime/slime.png",
       "item/apple.png",
       "item/diamond_sword.png",
     ]);
@@ -131,12 +132,29 @@ describe("resource pack textures", () => {
       "block/tnt_side.png",
       "block/glass.png",
       "item/diamond_pickaxe.png",
-      "entity/pig.png",
-      "entity/chicken.png",
+      "entity/pig/pig_temperate.png",
+      "entity/chicken/chicken_temperate.png",
     ]) {
       assert.equal(fallback.includes(key), true);
       assert.equal(present.includes(key), false);
     }
+  });
+
+  it("accepts any PNG under the block, item, entity, and colormap roots", () => {
+    const textures = texturesFromPackFiles([
+      { path: "pack/assets/minecraft/textures/block/deepslate/whatever.png", bytes: PNG },
+      { path: "pack/assets/minecraft/textures/item/new_item.png", bytes: PNG },
+      { path: "pack/assets/minecraft/textures/entity/zombie/zombie.png", bytes: PNG },
+      { path: "pack/assets/minecraft/textures/colormap/foliage.png", bytes: PNG },
+      { path: "pack/assets/minecraft/textures/gui/widgets.png", bytes: PNG },
+      { path: "pack/assets/minecraft/textures/block/notes.txt", bytes: PNG },
+    ]);
+    assert.deepEqual(textures.map((texture) => texture.key).sort(), [
+      "block/deepslate/whatever.png",
+      "colormap/foliage.png",
+      "entity/zombie/zombie.png",
+      "item/new_item.png",
+    ]);
   });
 
   it("rejects a file that is not a zip, an empty pack, and a pack over the size cap", async () => {

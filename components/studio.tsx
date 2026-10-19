@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { PropShelf } from "@/components/prop-shelf";
 import { TimelineEditor } from "@/components/timeline-editor";
+import { catalogLabel, loadCatalog, subscribeCatalog } from "@/lib/catalog";
 import { createAlexSkin, createSteveSkin } from "@/lib/defaults";
 import { StudioEngine } from "@/lib/engine";
 import { LOCALE_STORAGE_KEY, code, errorNote, htmlLang, note, parseNote, readLocale, t, type Locale, type MessageKey, type Note } from "@/lib/i18n";
@@ -13,7 +14,6 @@ import { POSES } from "@/lib/poses";
 import { PRESET_STORAGE_KEY, mergePresets, newPresetId, parsePresetDocument, presetDocument, type UserPreset } from "@/lib/presets";
 import { inferModelType, loadImage, loadSkinToCanvas } from "@/lib/skin-image";
 import { clearStoredPropTexturePack, loadStoredPropTexturePack, storePropTexturePack } from "@/lib/pack-store";
-import { catalogLabel, loadCatalog, subscribeCatalog } from "@/lib/catalog";
 import { setCustomAssets } from "@/lib/custom-assets";
 import type { CustomAsset } from "@/lib/custom-import";
 import { loadStoredCustomAssets, storeCustomAssets } from "@/lib/custom-store";
@@ -220,6 +220,11 @@ export function Studio() {
       return;
     }
     engineRef.current = engine;
+    // The shelf and prop meshes read the generated vanilla catalog. Load it
+    // once, then rebuild any props that were waiting on it.
+    void loadCatalog()
+      .then(() => engine.reloadProps())
+      .catch(() => undefined);
     engine.renderer.domElement.setAttribute("aria-label", t(readLocale(), "preview"));
     if (bootCamera) engine.setCamera(bootCamera);
     if (sceneRef.current) engine.sync(sceneRef.current);
@@ -681,7 +686,7 @@ export function Studio() {
     );
     setSelection([prop.id]);
     setPanel("props");
-    setMessage(note("propAdded", { name: catalogLabel(catalogId, locale) }));
+    setMessage(note("propAdded", { name: catalogLabel(prop.catalogId, locale) }));
   }
 
   function removeSelected(id: string) {

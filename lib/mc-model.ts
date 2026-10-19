@@ -88,8 +88,11 @@ function resolveTexture(name: string | undefined, textures: Record<string, strin
   if (!name || typeof name !== "string") return "";
   let current = name;
   for (let hop = 0; hop < 8; hop += 1) {
-    if (!current.startsWith("#")) return textureFile(current);
-    const key = current.slice(1);
+    // Vanilla writes `#variable`, but 26.x models such as heavy_core also use a
+    // bare variable name (`"texture": "all"`). Treat a bare name as a variable
+    // when the model defines it; otherwise it is a texture path.
+    const key = current.startsWith("#") ? current.slice(1) : current;
+    if (!current.startsWith("#") && !Object.prototype.hasOwnProperty.call(textures, key)) return textureFile(current);
     if (seen.has(key)) return "";
     seen.add(key);
     const next = textures[key];
@@ -344,21 +347,29 @@ export function variantScore(key: string) {
   if (props.axis === "y") score += 40;
   if (props.facing === "east" || props.facing === "north") score += 20;
   if (props.open === "false" || props.powered === "false" || props.lit === "false" || props.waterlogged === "false") score += 10;
+  // Unpowered, unsnowed, closed variants are the plain look. Without this,
+  // `snowy=true` wins the tie-break by being the shorter key.
+  for (const value of Object.values(props)) {
+    if (value === "false") score += 6;
+    else if (value === "true") score -= 2;
+  }
   if (props.age) score += Number(props.age) || 0;
   return score;
 }
 
 export function showcaseProperties(blockstate: unknown): Record<string, string> {
   const text = JSON.stringify(blockstate);
-  const wall = text.includes('"low"') || text.includes('"tall"') || text.includes('"none"');
-  return {
-    north: wall ? "low" : "true",
-    south: wall ? "low" : "true",
-    east: wall ? "none" : "false",
-    west: wall ? "none" : "false",
-    up: "true",
-    down: "false",
-  };
+  // Walls, fences, redstone, and rails use three-state side values. Give the
+  // connected showcase: a straight north-south run, or a lone dot.
+  const wall = text.includes('"low"') || text.includes('"tall"');
+  const sided = text.includes('"none"');
+  if (wall) {
+    return { north: "low", south: "low", east: "none", west: "none", up: "true", down: "false" };
+  }
+  if (sided) {
+    return { north: "none", south: "none", east: "none", west: "none", up: "false", down: "false" };
+  }
+  return { north: "true", south: "true", east: "false", west: "false", up: "true", down: "false" };
 }
 
 function whenMatches(when: unknown, state: Record<string, string>): boolean {
@@ -387,7 +398,16 @@ export function bakeBlockstate(library: ModelLibrary, blockstate: unknown, hint?
   const record = blockstate as { variants?: Record<string, unknown>; multipart?: Array<{ apply?: unknown; when?: unknown }> };
   if (record.variants) {
     const keys = Object.keys(record.variants);
-    keys.sort((a, b) => variantScore(b) - variantScore(a) || a.length - b.length || a.localeCompare(b));
+    // At equal scores prefer the key with fewer properties, then the plainest
+    // value list (`false` before `true`), then alphabetical order.
+    keys.sort(
+      (a, b) =>
+        variantScore(b) - variantScore(a) ||
+        a.split(",").filter(Boolean).length - b.split(",").filter(Boolean).length ||
+        (a.includes("=true") ? 1 : 0) - (b.includes("=true") ? 1 : 0) ||
+        a.length - b.length ||
+        a.localeCompare(b),
+    );
     const chosen = record.variants[keys[0] ?? ""];
     const apply = asApply(Array.isArray(chosen) ? chosen[0] : chosen);
     if (!apply) return null;

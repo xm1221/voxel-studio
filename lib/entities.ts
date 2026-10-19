@@ -104,7 +104,7 @@ const S32 = { texW: 64, texH: 32 };
 const creeper: EntityDef = {
   id: "creeper",
   category: "hostile",
-  texture: "entity/creeper.png",
+  texture: "entity/creeper/creeper.png",
   texW: 64,
   texH: 32,
   crop: [0, 0, 8, 8],
@@ -121,7 +121,7 @@ const creeper: EntityDef = {
 const chicken: EntityDef = {
   id: "chicken",
   category: "passive",
-  texture: "entity/chicken.png",
+  texture: "entity/chicken/chicken_temperate.png",
   texW: 64,
   texH: 32,
   crop: [0, 0, 4, 6],
@@ -381,9 +381,9 @@ const wither: EntityDef = {
 
 export const ENTITIES: EntityDef[] = [
   creeper,
-  quadruped("pig", "entity/pig.png", S64, "passive", { body: [10, 8, 16], head: [8, 8, 8], leg: [4, 6], nose: [4, 3, 1] }, { body: [28, 8], head: [0, 0], leg: [0, 16], nose: [16, 16] }),
+  quadruped("pig", "entity/pig/pig_temperate.png", S64, "passive", { body: [10, 8, 16], head: [8, 8, 8], leg: [4, 6], nose: [4, 3, 1] }, { body: [28, 8], head: [0, 0], leg: [0, 16], nose: [16, 16] }),
   chicken,
-  slime("slime", "entity/slime.png"),
+  slime("slime", "entity/slime/slime.png"),
   slime("magma_cube", "entity/slime/magmacube.png"),
   humanoid("zombie", "entity/zombie/zombie.png", S64, "hostile", { overlay: true }),
   humanoid("husk", "entity/zombie/husk.png", S64, "hostile", { overlay: true }),

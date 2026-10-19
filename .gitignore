@@ -50,3 +50,6 @@ next-env.d.ts
 
 # Mojang client download used by scripts/generate-vanilla-catalog.ts
 .cache/
+
+# Generated vanilla catalog and Mojang textures (npm run catalog)
+/public/vanilla/gen/

@@ -1,64 +1,17 @@
 import type { Vec3 } from "./model-types.ts";
 import type { SceneProp } from "./types.ts";
+import { normalizeCatalogId } from "./catalog.ts";
 
 export const MAX_PROPS = 64;
 export const PROP_POSITION_LIMIT = 64;
 export const PROP_HEIGHT_MIN = -16;
 export const PROP_HEIGHT_MAX = 64;
 
-export type PropKind = "block" | "item" | "entity";
-
-export type BlockTexture =
-  | "grass"
-  | "dirt"
-  | "stone"
-  | "log"
-  | "planks"
-  | "sand"
-  | "tnt"
-  | "crafting"
-  | "glass";
-
-type BlockSpec = {
-  id: string;
-  kind: "block";
-  /** Shelf chip only. The mesh uses the vanilla PNG named by `texture`. */
-  swatch: string;
-  texture: BlockTexture;
-};
-
-type BuiltSpec = {
-  id: string;
-  kind: "item" | "entity";
-  /** Shelf chip only. The mesh uses the vanilla item or entity PNG. */
-  swatch: string;
-};
-
-export type PropSpec = BlockSpec | BuiltSpec;
-
-export const PROP_SPECS: PropSpec[] = [
-  { id: "grass", kind: "block", swatch: "#5d9b3a", texture: "grass" },
-  { id: "dirt", kind: "block", swatch: "#8a5a32", texture: "dirt" },
-  { id: "stone", kind: "block", swatch: "#8b8b8b", texture: "stone" },
-  { id: "log", kind: "block", swatch: "#6b4e2e", texture: "log" },
-  { id: "planks", kind: "block", swatch: "#c4a15a", texture: "planks" },
-  { id: "sand", kind: "block", swatch: "#e6d7a2", texture: "sand" },
-  { id: "tnt", kind: "block", swatch: "#d6453d", texture: "tnt" },
-  { id: "crafting", kind: "block", swatch: "#8b5a2b", texture: "crafting" },
-  { id: "glass", kind: "block", swatch: "#b9e4f5", texture: "glass" },
-  { id: "sword", kind: "item", swatch: "#d7dbe2" },
-  { id: "pickaxe", kind: "item", swatch: "#8d97a3" },
-  { id: "apple", kind: "item", swatch: "#d63c3c" },
-  { id: "torch", kind: "item", swatch: "#f0b429" },
-  { id: "creeper", kind: "entity", swatch: "#3a9b32" },
-  { id: "pig", kind: "entity", swatch: "#f0a5a2" },
-  { id: "chicken", kind: "entity", swatch: "#f4f4f4" },
-  { id: "slime", kind: "entity", swatch: "#67c24a" },
-];
-
-const SPEC_BY_ID = new Map(PROP_SPECS.map((spec) => [spec.id, spec]));
-
-const SLOTS: Array<[number, number, number]> = [
+/**
+ * The first sixteen slots are the ones the hand-written shelf used, so old
+ * scenes place props exactly where they used to. Later slots spiral outward.
+ */
+const BASE_SLOTS: ReadonlyArray<readonly [number, number, number]> = [
   [18, 0, 4],
   [-20, 0, 4],
   [6, 0, 14],
@@ -77,16 +30,36 @@ const SLOTS: Array<[number, number, number]> = [
   [-8, 0, 24],
 ];
 
-export function propSpec(id: string): PropSpec | undefined {
-  return SPEC_BY_ID.get(id);
+const SLOT_SPACING = 9;
+const MIN_RADIUS = 8;
+
+function spiralSlots(): Array<readonly [number, number, number]> {
+  const slots: Array<readonly [number, number, number]> = [];
+  const taken = new Set(BASE_SLOTS.map(([x, , z]) => `${x},${z}`));
+  const ring = Math.ceil(Math.sqrt(MAX_PROPS * 3));
+  // Walk a square spiral over a coarse grid; each step keeps a clear gap to
+  // the players at the origin and never repeats a slot.
+  for (let radius = 1; slots.length < MAX_PROPS * 2 && radius <= ring + 8; radius += 1) {
+    for (let dz = -radius; dz <= radius; dz += 1) {
+      for (let dx = -radius; dx <= radius; dx += 1) {
+        if (Math.max(Math.abs(dx), Math.abs(dz)) !== radius) continue;
+        const x = dx * SLOT_SPACING;
+        const z = dz * SLOT_SPACING;
+        if (Math.hypot(x, z) < MIN_RADIUS) continue;
+        const key = `${x},${z}`;
+        if (taken.has(key)) continue;
+        taken.add(key);
+        slots.push([x, 0, z]);
+      }
+    }
+  }
+  return slots;
 }
 
-const CATALOG_ID = /^(block|item|entity):[a-z0-9_]{1,64}$/;
-const CUSTOM_ID = /^custom:[a-z0-9_]{1,40}$/;
+const EXTRA_SLOTS = spiralSlots();
 
-/** Legacy shelf ids, `block:` / `item:` / `entity:` ids, and imported `custom:` ids. */
-export function isCatalogId(id: string) {
-  return SPEC_BY_ID.has(id) || CATALOG_ID.test(id) || CUSTOM_ID.test(id);
+export function propSlot(index: number): readonly [number, number, number] {
+  return BASE_SLOTS[index] ?? EXTRA_SLOTS[index - BASE_SLOTS.length] ?? [0, 0, 0];
 }
 
 export function clampPropPosition(position: Vec3): Vec3 {
@@ -137,14 +110,15 @@ export function parseSceneProps(value: unknown): SceneProp[] {
   for (const entry of value) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
     const record = entry as Record<string, unknown>;
-    if (typeof record.catalogId !== "string" || !isCatalogId(record.catalogId)) continue;
+    const catalogId = normalizeCatalogId(record.catalogId);
+    if (!catalogId) continue;
     if (typeof record.id !== "string" || !/^[a-zA-Z0-9_-]{1,24}$/.test(record.id) || used.has(record.id)) continue;
     const position = record.position;
     const point = position && typeof position === "object" && !Array.isArray(position) ? (position as Record<string, unknown>) : {};
     used.add(record.id);
     props.push({
       id: record.id,
-      catalogId: record.catalogId,
+      catalogId,
       name: typeof record.name === "string" ? record.name.trim().slice(0, 48) : "",
       position: {
         x: finite(point.x, -PROP_POSITION_LIMIT, PROP_POSITION_LIMIT, 0),
@@ -168,11 +142,12 @@ export function activePropFrom(value: unknown, props: SceneProp[]): string | nul
 }
 
 export function placeProp(catalogId: string, existing: SceneProp[]): SceneProp | null {
-  if (!isCatalogId(catalogId) || existing.length >= MAX_PROPS) return null;
-  const slot = SLOTS[existing.length] ?? SLOTS[SLOTS.length - 1];
+  const normalized = normalizeCatalogId(catalogId);
+  if (!normalized || existing.length >= MAX_PROPS) return null;
+  const slot = propSlot(existing.length);
   return {
     id: newPropId(new Set(existing.map((prop) => prop.id))),
-    catalogId,
+    catalogId: normalized,
     name: "",
     position: { x: slot[0], y: slot[1], z: slot[2] },
     rotation: { x: 0, y: 0, z: 0 },

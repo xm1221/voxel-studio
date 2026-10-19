@@ -22,6 +22,8 @@ import { applyJoints, buildRig, configureTexture, type Rig } from "./rig/build";
 import { voxelPieces, type VoxelParent } from "./rig/layers";
 import { applyLook } from "./rig/look";
 import { applyLights, createLights } from "./lighting";
+import { catalogEntry } from "./catalog.ts";
+import { customAsset } from "./custom-assets.ts";
 import { TransformGizmo, type GizmoMode } from "./gizmo.ts";
 import { samplePropClip } from "./prop-clip.ts";
 import { createPropGroup, propSignature } from "./prop-mesh.ts";
@@ -500,12 +502,16 @@ export class StudioEngine {
     for (const prop of draft.props) {
       let group = this.propGroups.get(prop.id);
       if (!group || group.userData.catalogId !== prop.catalogId || group.userData.signature !== propSignature(prop.catalogId)) {
+        // The catalog loads asynchronously; unknown ids simply wait or never render.
+        // Custom assets live beside the catalog and can render before it arrives.
+        if (!catalogEntry(prop.catalogId) && !customAsset(prop.catalogId)) continue;
         if (group) {
           this.propRoot.remove(group);
           disposePropGroup(group);
         }
         group = createPropGroup(prop.catalogId);
         group.userData.propId = prop.id;
+        group.userData.catalogId = prop.catalogId;
         this.propRoot.add(group);
         this.propGroups.set(prop.id, group);
       }
