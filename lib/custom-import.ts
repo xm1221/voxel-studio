@@ -114,10 +114,20 @@ export function customFromJavaModel(json: unknown, files: Map<string, string>, o
   return { id, name, kind, model: withTextures(model, textures), textures };
 }
 
+function textureString(value: unknown) {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && "sprite" in value && typeof (value as { sprite?: unknown }).sprite === "string") {
+    return (value as { sprite: string }).sprite;
+  }
+  return "";
+}
+
 function rewriteDocument(document: ModelDocument, files: Map<string, string>, id: string, textures: Record<string, string>): ModelDocument {
   const mapped: Record<string, string> = {};
   for (const [key, value] of Object.entries(document.textures ?? {})) {
-    mapped[key] = value.startsWith("#") ? value : textureKey(value, files, id, textures);
+    const raw = textureString(value);
+    if (!raw) continue;
+    mapped[key] = raw.startsWith("#") ? raw : textureKey(raw, files, id, textures);
   }
   return { ...document, textures: mapped };
 }
@@ -212,12 +222,14 @@ export function customFromBbmodel(json: unknown, options?: { name?: string; id?:
       faces[faceName] = { uv, texture, ...(rotation ? { rotation } : {}) };
     }
     if (!Object.keys(faces).length) continue;
-    const rotation = element.rotation && (element.rotation.axis === "x" || element.rotation.axis === "y" || element.rotation.axis === "z")
+    const spin = element.rotation;
+    const axis = spin?.axis;
+    const rotation: CompiledElement["rotation"] = spin && (axis === "x" || axis === "y" || axis === "z")
       ? {
-          origin: [element.rotation.origin?.[0] ?? 8, element.rotation.origin?.[1] ?? 8, element.rotation.origin?.[2] ?? 8] as [number, number, number],
-          axis: element.rotation.axis,
-          angle: Number(element.rotation.angle) || 0,
-          ...(element.rotation.rescale ? { rescale: true as const } : {}),
+          origin: [spin.origin?.[0] ?? 8, spin.origin?.[1] ?? 8, spin.origin?.[2] ?? 8],
+          axis,
+          angle: Number(spin.angle) || 0,
+          ...(spin.rescale ? { rescale: true as const } : {}),
         }
       : undefined;
     elements.push({

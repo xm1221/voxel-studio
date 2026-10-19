@@ -219,6 +219,66 @@ export function rayPlane(planePoint: Vec3, planeNormal: Vec3, rayOrigin: Vec3, r
   return add(rayOrigin, mul(rayDir, t));
 }
 
+export type GizmoKind = "translate" | "plane" | "rotate" | "scale";
+
+export type GizmoInput = {
+  kind: GizmoKind;
+  axis: Axis | "all";
+  space: Space;
+  snap: boolean;
+  fine: boolean;
+  distance: number;
+  degrees: number;
+  factor: number;
+  delta: Vec3;
+};
+
+function clampChannel(value: number, min: number, max: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(max, Math.max(min, value));
+}
+
+/** Apply one gizmo gesture to the transform captured when the drag started. */
+export function gizmoTransform(
+  start: { position: Vec3; rotation: Vec3; scale: Vec3 },
+  input: GizmoInput,
+): { position: Vec3; rotation: Vec3; scale: Vec3 } {
+  if (input.kind === "translate" && (input.axis === "x" || input.axis === "y" || input.axis === "z")) {
+    const position = applyAxisTranslation(start.position, input.axis, input.distance, start.rotation, input.space, input.snap, input.fine);
+    return { position: clampPosition(position), rotation: start.rotation, scale: start.scale };
+  }
+  if (input.kind === "plane") {
+    const position = applyPlaneTranslation(start.position, { x: 0, y: 0, z: 0 }, input.delta, input.snap, input.fine);
+    return { position: clampPosition(position), rotation: start.rotation, scale: start.scale };
+  }
+  if (input.kind === "rotate" && (input.axis === "x" || input.axis === "y" || input.axis === "z")) {
+    const rotation = applyAxisRotation(start.rotation, input.axis, input.degrees, input.space, input.snap, input.fine);
+    return {
+      position: start.position,
+      rotation: {
+        x: clampChannel(rotation.x, -720, 720),
+        y: clampChannel(rotation.y, -720, 720),
+        z: clampChannel(rotation.z, -720, 720),
+      },
+      scale: start.scale,
+    };
+  }
+  if (input.kind === "scale") {
+    const factor = Number.isFinite(input.factor) && input.factor !== 0 ? input.factor : 1;
+    const scale = applyScale(start.scale, input.axis, factor, input.snap, input.fine);
+    return { position: start.position, rotation: start.rotation, scale };
+  }
+  return { position: { ...start.position }, rotation: { ...start.rotation }, scale: { ...start.scale } };
+}
+
+function clampPosition(position: Vec3): Vec3 {
+  return {
+    x: round3(clampChannel(position.x, -64, 64)),
+    y: round3(clampChannel(position.y, -16, 64)),
+    z: round3(clampChannel(position.z, -64, 64)),
+  };
+}
+
 export function signedAngle(origin: Vec3, axis: Vec3, from: Vec3, to: Vec3) {
   const normal = normalize(axis);
   const project = (point: Vec3) => {

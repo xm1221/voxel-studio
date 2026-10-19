@@ -54,7 +54,7 @@ describe("scene props", () => {
     const draft = scene();
     draft.props = [
       placed,
-      { ...placed, id: "o_extra", catalogId: "not-a-block", position: { x: 0, y: 0, z: 0 }, rotationY: 0, scale: 1 },
+      { ...placed, id: "o_extra", catalogId: "not-a-block" },
     ];
     draft.activePropId = placed.id;
     const decoded = decodePayload(encodePayload(toPayload(draft, undefined, false)));
@@ -78,20 +78,44 @@ describe("scene props", () => {
     assert.equal(next.scene.activePropId, null);
   });
 
-  it("caps the catalog and refuses a 17th prop", () => {
+  it("caps the stage at 64 props and keeps legacy rotation and scale", () => {
     assert.equal(new Set(PROP_SPECS.map((spec) => spec.id)).size, PROP_SPECS.length);
-    const noisy = Array.from({ length: 20 }, (_, index) => ({
+    const noisy = Array.from({ length: 70 }, (_, index) => ({
       id: `o_${index}`,
       catalogId: "grass",
       position: { x: 99, y: 0, z: 0 },
-      rotationY: 0,
+      rotationY: 90,
       scale: 9,
     }));
     const parsed = parseSceneProps(noisy);
     assert.equal(parsed.length, MAX_PROPS);
-    assert.equal(parsed[0].position.x, 32);
-    assert.equal(parsed[0].scale, 2.2);
-    const full = parsed;
-    assert.equal(placeProp("stone", full), null);
+    assert.equal(MAX_PROPS, 64);
+    assert.equal(parsed[0].position.x, 64);
+    assert.equal(parsed[0].scale.x, 8);
+    assert.equal(parsed[0].rotation.y, 90);
+    assert.equal(parsed[0].pivot.x, 0);
+    assert.equal(placeProp("stone", parsed), null);
+  });
+
+  it("round-trips a full transform and still accepts a namespaced id", () => {
+    const placed = placeProp("block:stone", []);
+    assert.ok(placed);
+    if (!placed) return;
+    placed.rotation = { x: 10, y: 20, z: -5 };
+    placed.scale = { x: 1, y: 2, z: 0.5 };
+    placed.pivot = { x: 0, y: 8, z: 0 };
+    placed.name = "Stone";
+    const draft = scene();
+    draft.props = [placed];
+    const payload = toPayload(draft, undefined, false);
+    assert.equal(payload.props?.[0].rotationY, 20);
+    const decoded = decodePayload(encodePayload(payload));
+    assert.ok(decoded);
+    const next = sceneFromPayload(decoded, "steve", "alex");
+    assert.equal(next.scene.props[0].catalogId, "block:stone");
+    assert.equal(next.scene.props[0].rotation.x, 10);
+    assert.equal(next.scene.props[0].scale.z, 0.5);
+    assert.equal(next.scene.props[0].pivot.y, 8);
+    assert.equal(next.scene.props[0].name, "Stone");
   });
 });

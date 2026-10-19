@@ -13,8 +13,14 @@ import {
   TextureLoader,
   type Texture,
 } from "three";
-import type { PropSpec } from "./props";
-import { withBasePath } from "./paths";
+import { catalogEntry } from "./catalog.ts";
+import { customAsset } from "./custom-assets.ts";
+import { entityDef } from "./entities.ts";
+import type { TintKind } from "./model-types.ts";
+import { buildCompiledGroup, buildEntityGroup, buildPlaceholder } from "./prop-geometry.ts";
+import type { PropSpec } from "./props.ts";
+import { propSpec } from "./props.ts";
+import { withBasePath } from "./paths.ts";
 
 /** Unmodified PNGs from the vanilla 26.3 client. See public/vanilla/SOURCE.md. */
 const ROOT = "/vanilla/26.3";
@@ -30,6 +36,8 @@ const markerMaterial = new MeshBasicMaterial({
 const loader = new TextureLoader();
 const textures = new Map<string, Texture>();
 const stageTextures = new Map<string, Texture>();
+const customUrls = new Map<string, string>();
+const tintColors = new Map<string, Promise<[number, number, number]>>();
 let plainsGrass: [number, number, number] | null = null;
 let stagePlainsGrass: [number, number, number] | null = null;
 
@@ -76,6 +84,20 @@ function dropPropTextures() {
   for (const texture of textures.values()) texture.dispose();
   textures.clear();
   plainsGrass = null;
+  tintColors.clear();
+}
+
+/** Data URLs for `custom:` texture keys. Vanilla paths stay as files. */
+export function setCustomTextures(next: Record<string, string>) {
+  customUrls.clear();
+  for (const [key, url] of Object.entries(next)) customUrls.set(key, url);
+  for (const key of [...textures.keys()]) {
+    if (key.startsWith("custom:") || key.startsWith("data:")) {
+      textures.get(key)?.dispose();
+      textures.delete(key);
+    }
+  }
+  for (const listener of packListeners) listener();
 }
 
 function packFileUrl(file: string) {
@@ -103,12 +125,133 @@ function prepare(texture: Texture) {
 function textureFor(file: string) {
   const cached = textures.get(file);
   if (cached) return cached;
-  const texture = loader.load(packFileUrl(file) ?? vanillaUrl(file), (loaded) => {
+  const custom = customUrls.get(file);
+  const url = custom ?? (file.startsWith("data:") ? file : (packFileUrl(file) ?? vanillaUrl(file)));
+  const texture = loader.load(url, (loaded) => {
     prepare(loaded);
   });
   prepare(texture);
   textures.set(file, texture);
   return texture;
+}
+
+const TINT_RGB: Record<"water" | "redstone", [number, number, number]> = {
+  water: [63, 118, 228],
+  redstone: [255, 0, 0],
+};
+
+function colormapTint(file: string): Promise<[number, number, number]> {
+  const cached = tintColors.get(file);
+  if (cached) return cached;
+  const promise = new Promise<[number, number, number]>((resolve) => {
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        resolve([145, 189, 89]);
+        return;
+      }
+      context.drawImage(image, 0, 0);
+      const temperature = 0.8;
+      const humidity = 0.4;
+      const x = Math.floor((1 - temperature) * 255);
+      const y = Math.floor((1 - humidity * temperature) * 255);
+      const pixel = context.getImageData(Math.min(x, image.width - 1), Math.min(y, image.height - 1), 1, 1).data;
+      resolve([pixel[0], pixel[1], pixel[2]]);
+    };
+    image.onerror = () => resolve([145, 189, 89]);
+    image.src = packFileUrl(file) ?? vanillaUrl(file);
+  });
+  tintColors.set(file, promise);
+  return promise;
+}
+
+function tintedTexture(file: string, kind: TintKind) {
+  const key = `${file}#${kind}`;
+  const cached = textures.get(key);
+  if (cached) return cached;
+  const canvas = document.createElement("canvas");
+  canvas.width = 16;
+  canvas.height = 16;
+  const texture = new CanvasTexture(canvas);
+  prepare(texture);
+  textures.set(key, texture);
+  const color = kind === "water" || kind === "redstone" ? Promise.resolve(TINT_RGB[kind]) : colormapTint(kind === "foliage" ? "colormap/foliage.png" : "colormap/grass.png");
+  const sourceUrl = customUrls.get(file) ?? (file.startsWith("data:") ? file : (packFileUrl(file) ?? vanillaUrl(file)));
+  void color.then((rgb) => {
+    const image = new Image();
+    image.onload = () => {
+      const painted = document.createElement("canvas");
+      painted.width = image.width;
+      painted.height = image.height;
+      const context = painted.getContext("2d");
+      if (!context) return;
+      context.imageSmoothingEnabled = false;
+      context.drawImage(image, 0, 0);
+      const pixels = context.getImageData(0, 0, painted.width, painted.height);
+      for (let i = 0; i < pixels.data.length; i += 4) {
+        pixels.data[i] = Math.round((pixels.data[i] * rgb[0]) / 255);
+        pixels.data[i + 1] = Math.round((pixels.data[i + 1] * rgb[1]) / 255);
+        pixels.data[i + 2] = Math.round((pixels.data[i + 2] * rgb[2]) / 255);
+      }
+      context.putImageData(pixels, 0, 0);
+      texture.image = painted;
+      texture.needsUpdate = true;
+    };
+    image.src = sourceUrl;
+  });
+  return texture;
+}
+
+function textureForTint(file: string, tint?: TintKind) {
+  return tint ? tintedTexture(file, tint) : textureFor(file);
+}
+
+export function propSignature(catalogId: string) {
+  const custom = customAsset(catalogId);
+  if (custom) return `custom:${custom.id}:${custom.model.elements.length}:${Object.keys(custom.textures).length}`;
+  const entry = catalogEntry(catalogId);
+  if (entry?.model?.elements.length) return `model:${entry.id}:${entry.model.elements.length}`;
+  if (propSpec(catalogId)) return `legacy:${catalogId}`;
+  const entity = entityDef(catalogId);
+  if (entity) return `entity:${entity.id}:${entity.boxes.length}`;
+  return `missing:${catalogId}`;
+}
+
+export function createPropGroup(catalogId: string) {
+  const root = new Group();
+  root.name = `prop-${catalogId}`;
+  const visual = new Group();
+  visual.name = "visual";
+  root.add(visual);
+  try {
+    visual.add(buildVisual(catalogId));
+  } catch {
+    visual.add(buildPlaceholder());
+  }
+  addMarker(root);
+  root.userData.catalogId = catalogId;
+  root.userData.signature = propSignature(catalogId);
+  return root;
+}
+
+function buildVisual(catalogId: string) {
+  const custom = customAsset(catalogId);
+  if (custom) return buildCompiledGroup(custom.model, textureForTint);
+  const entry = catalogEntry(catalogId);
+  if (entry?.model?.elements.length) return buildCompiledGroup(entry.model, textureForTint);
+  const spec = propSpec(catalogId);
+  if (spec) {
+    const legacy = buildProp(spec);
+    legacy.getObjectByName("marker")?.removeFromParent();
+    return legacy;
+  }
+  const entity = entityDef(catalogId);
+  if (entity) return buildEntityGroup(entity, textureFor);
+  return buildPlaceholder();
 }
 
 /** Noon and nether floors stay on the bundled vanilla files, even when a pack replaces props. */

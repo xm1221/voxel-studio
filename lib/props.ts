@@ -1,6 +1,10 @@
-import type { SceneProp } from "./types";
+import type { Vec3 } from "./model-types.ts";
+import type { SceneProp } from "./types.ts";
 
-export const MAX_PROPS = 16;
+export const MAX_PROPS = 64;
+export const PROP_POSITION_LIMIT = 64;
+export const PROP_HEIGHT_MIN = -16;
+export const PROP_HEIGHT_MAX = 64;
 
 export type PropKind = "block" | "item" | "entity";
 
@@ -77,8 +81,40 @@ export function propSpec(id: string): PropSpec | undefined {
   return SPEC_BY_ID.get(id);
 }
 
+const CATALOG_ID = /^(block|item|entity):[a-z0-9_]{1,64}$/;
+const CUSTOM_ID = /^custom:[a-z0-9_]{1,40}$/;
+
+/** Legacy shelf ids, `block:` / `item:` / `entity:` ids, and imported `custom:` ids. */
 export function isCatalogId(id: string) {
-  return SPEC_BY_ID.has(id);
+  return SPEC_BY_ID.has(id) || CATALOG_ID.test(id) || CUSTOM_ID.test(id);
+}
+
+export function clampPropPosition(position: Vec3): Vec3 {
+  return {
+    x: finite(position.x, -PROP_POSITION_LIMIT, PROP_POSITION_LIMIT, 0),
+    y: finite(position.y, PROP_HEIGHT_MIN, PROP_HEIGHT_MAX, 0),
+    z: finite(position.z, -PROP_POSITION_LIMIT, PROP_POSITION_LIMIT, 0),
+  };
+}
+
+function vec3From(value: unknown, min: number, max: number, fallback: number, uniform = false): Vec3 {
+  if (typeof value === "number" || uniform) {
+    const next = finite(value, min, max, fallback);
+    return { x: next, y: next, z: next };
+  }
+  const record = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  return {
+    x: finite(record.x, min, max, fallback),
+    y: finite(record.y, min, max, fallback),
+    z: finite(record.z, min, max, fallback),
+  };
+}
+
+function rotationFrom(record: Record<string, unknown>): Vec3 {
+  if (record.rotation && typeof record.rotation === "object" && !Array.isArray(record.rotation)) {
+    return vec3From(record.rotation, -720, 720, 0);
+  }
+  return { x: 0, y: finite(record.rotationY, -720, 720, 0), z: 0 };
 }
 
 function finite(value: unknown, min: number, max: number, fallback: number) {
@@ -109,13 +145,17 @@ export function parseSceneProps(value: unknown): SceneProp[] {
     props.push({
       id: record.id,
       catalogId: record.catalogId,
+      name: typeof record.name === "string" ? record.name.trim().slice(0, 48) : "",
       position: {
-        x: finite(point.x, -32, 32, 0),
-        y: finite(point.y, -2, 32, 0),
-        z: finite(point.z, -32, 32, 0),
+        x: finite(point.x, -PROP_POSITION_LIMIT, PROP_POSITION_LIMIT, 0),
+        y: finite(point.y, PROP_HEIGHT_MIN, PROP_HEIGHT_MAX, 0),
+        z: finite(point.z, -PROP_POSITION_LIMIT, PROP_POSITION_LIMIT, 0),
       },
-      rotationY: finite(record.rotationY, -180, 180, 0),
-      scale: finite(record.scale, 0.4, 2.2, 1),
+      rotation: rotationFrom(record),
+      scale: vec3From(record.scale, 0.05, 8, 1, typeof record.scale === "number"),
+      pivot: vec3From(record.pivot, -64, 64, 0),
+      hidden: record.hidden === true,
+      locked: record.locked === true,
     });
     if (props.length >= MAX_PROPS) break;
   }
@@ -133,8 +173,26 @@ export function placeProp(catalogId: string, existing: SceneProp[]): SceneProp |
   return {
     id: newPropId(new Set(existing.map((prop) => prop.id))),
     catalogId,
+    name: "",
     position: { x: slot[0], y: slot[1], z: slot[2] },
-    rotationY: 0,
-    scale: 1,
+    rotation: { x: 0, y: 0, z: 0 },
+    scale: { x: 1, y: 1, z: 1 },
+    pivot: { x: 0, y: 0, z: 0 },
+    hidden: false,
+    locked: false,
+  };
+}
+
+export function duplicateProp(prop: SceneProp, existing: SceneProp[]): SceneProp | null {
+  if (existing.length >= MAX_PROPS) return null;
+  const position = clampPropPosition({ ...prop.position, x: prop.position.x + 4 });
+  return {
+    ...prop,
+    id: newPropId(new Set(existing.map((item) => item.id))),
+    name: prop.name,
+    position,
+    rotation: { ...prop.rotation },
+    scale: { ...prop.scale },
+    pivot: { ...prop.pivot },
   };
 }

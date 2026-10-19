@@ -724,6 +724,122 @@ input[type="range"] {
   text-align: left;
 }
 
+.prop-library {
+  height: 280px;
+  margin-top: 10px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.prop-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 44px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+}
+
+.prop-row:hover,
+.prop-row.active {
+  background: rgba(36, 87, 214, 0.08);
+}
+
+.prop-row span {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prop-icon {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #e7eef6 center / cover no-repeat;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  image-rendering: pixelated;
+}
+
+.prop-icon img {
+  display: block;
+  width: 28px;
+  height: 28px;
+  max-width: none;
+  image-rendering: pixelated;
+}
+
+.outliner {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0 12px;
+}
+
+.outliner-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 6px;
+  border-radius: 12px;
+}
+
+.outliner-row.active {
+  background: rgba(36, 87, 214, 0.1);
+}
+
+.outliner-row.picked {
+  background: rgba(36, 87, 214, 0.05);
+}
+
+.num-grid {
+  display: grid;
+  grid-template-columns: 64px repeat(3, minmax(0, 1fr));
+  gap: 6px 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.num-grid span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.num-grid input {
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.empty-state {
+  margin: 8px 0 12px;
+  padding: 14px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.tool-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
 @media (max-width: 960px) {
   .studio {
     height: 100dvh;
