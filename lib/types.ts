@@ -1,3 +1,5 @@
+import type { PropClip } from "./prop-clip.ts";
+
 export type ModelType = "default" | "slim";
 
 export type PlayerSource = "builtin" | "username" | "upload";
@@ -78,14 +80,32 @@ export type PropKind = "block" | "item" | "entity";
 export type SceneProp = {
   id: string;
   catalogId: string;
+  /** Empty until the user renames it. The shelf then falls back to the catalog label. */
+  name: string;
   position: {
     x: number;
     y: number;
     z: number;
   };
-  /** Degrees around Y. */
-  rotationY: number;
-  scale: number;
+  /** Degrees, XYZ Euler. */
+  rotation: {
+    x: number;
+    y: number;
+    z: number;
+  };
+  scale: {
+    x: number;
+    y: number;
+    z: number;
+  };
+  /** Offset of the mesh inside the rotation pivot. Zero keeps the old ground-center pivot. */
+  pivot: {
+    x: number;
+    y: number;
+    z: number;
+  };
+  hidden: boolean;
+  locked: boolean;
 };
 
 export type SceneDraft = {
@@ -94,6 +114,8 @@ export type SceneDraft = {
   /** Blocks, items, and simple entities standing with the skins. */
   props: SceneProp[];
   activePropId: string | null;
+  /** Keyframes for prop transforms. Omitted from older scenes. */
+  propClip?: PropClip | null;
   background: BackgroundId;
   /** Data URL kept on this browser. Share links omit it. */
   backgroundImage: string | null;

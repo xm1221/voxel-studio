@@ -5,11 +5,14 @@ import {
   NearestFilter,
   PCFSoftShadowMap,
   PerspectiveCamera,
+  Raycaster,
   Scene,
   SRGBColorSpace,
+  Vector2,
   Vector3,
   WebGLRenderer,
   type Material,
+  type Object3D,
 } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { captureClip, captureStill } from "./capture";
@@ -19,14 +22,35 @@ import { applyJoints, buildRig, configureTexture, type Rig } from "./rig/build";
 import { voxelPieces, type VoxelParent } from "./rig/layers";
 import { applyLook } from "./rig/look";
 import { applyLights, createLights } from "./lighting";
-import { buildProp } from "./prop-mesh";
-import { propSpec } from "./props";
+import { catalogEntry } from "./catalog.ts";
+import { customAsset } from "./custom-assets.ts";
+import { TransformGizmo, type GizmoMode } from "./gizmo.ts";
+import { samplePropClip } from "./prop-clip.ts";
+import { createPropGroup, propSignature } from "./prop-mesh.ts";
+import { closestLineT, rayPlane, signedAngle, snapActive, type Axis, type Space } from "./transform-math.ts";
+import type { Vec3 } from "./model-types.ts";
 import { applyStage, createStage } from "./stage";
 import { loadImage, loadSkinToCanvas } from "./skin-image";
 import { FOOT_Y } from "./rig/layout";
 import type { CameraSnapshot, Joints, SceneDraft } from "./types";
 
 export type MoveTarget = { kind: "player" | "prop"; id: string };
+
+export type GizmoPhase =
+  | { phase: "start" }
+  | {
+      phase: "move";
+      kind: "translate" | "plane" | "rotate" | "scale";
+      axis: Axis | "all";
+      space: Space;
+      snap: boolean;
+      fine: boolean;
+      distance: number;
+      degrees: number;
+      factor: number;
+      delta: Vec3;
+    }
+  | { phase: "end" };
 
 function disposePropGroup(group: Group) {
   const geometries = new Set<{ dispose: () => void }>();
@@ -69,7 +93,28 @@ export class StudioEngine {
   private transformHandler: ((target: MoveTarget & { x: number; z: number }) => void) | null = null;
   private readonly propRoot = new Group();
   private readonly propGroups = new Map<string, Group>();
+  private readonly gizmo = new TransformGizmo();
+  private readonly raycaster = new Raycaster();
+  private readonly pointer = new Vector2();
+  private gizmoEnabled = false;
+  private gizmoSnap = true;
+  private gizmoSpace: Space = "local";
+  private gizmoHandler: ((event: GizmoPhase) => void) | null = null;
+  private pickHandler: ((id: string, shift: boolean) => void) | null = null;
   private markersHidden = false;
+  private gizmoDrag: {
+    pointerId: number;
+    kind: "translate" | "plane" | "rotate" | "scale";
+    axis: Axis | "all";
+    origin: Vec3;
+    dir: Vec3;
+    normal: Vec3;
+    startT: number;
+    startHit: Vec3;
+    startPointerX: number;
+    startPointerY: number;
+    startAngle: number;
+  } | null = null;
   private scrub: { id: string; time: number } | null = null;
   private drag:
     | {
@@ -115,6 +160,7 @@ export class StudioEngine {
 
     this.scene.add(this.holder);
     this.scene.add(this.propRoot);
+    this.scene.add(this.gizmo.root);
     this.lights = createLights(this.scene);
     this.stage = createStage(this.scene);
 
@@ -156,8 +202,105 @@ export class StudioEngine {
     return player ? { x: player.position.x, z: player.position.z } : null;
   }
 
+  /** Hidden gizmo parts and hidden props stay in the graph, so the raycaster still hits them. */
+  private drawn(object: Object3D | null) {
+    let current = object;
+    while (current) {
+      if (!current.visible) return false;
+      current = current.parent;
+    }
+    return true;
+  }
+
+  private pointerTurn(clientX: number, clientY: number, origin: Vec3) {
+    const projected = new Vector3(origin.x, origin.y, origin.z).project(this.camera);
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const centerX = rect.left + (projected.x * 0.5 + 0.5) * rect.width;
+    const centerY = rect.top + (-projected.y * 0.5 + 0.5) * rect.height;
+    return Math.atan2(clientY - centerY, clientX - centerX);
+  }
+
+  private screenTurn(clientX: number, clientY: number, drag: { origin: Vec3; dir: Vec3; startAngle: number }) {
+    let delta = this.pointerTurn(clientX, clientY, drag.origin) - drag.startAngle;
+    if (delta > Math.PI) delta -= Math.PI * 2;
+    if (delta < -Math.PI) delta += Math.PI * 2;
+    const forward = this.camera.getWorldDirection(new Vector3());
+    const facing = drag.dir.x * forward.x + drag.dir.y * forward.y + drag.dir.z * forward.z;
+    const sign = facing < 0 ? -1 : 1;
+    return sign * delta * (180 / Math.PI);
+  }
+
+  private pointerRay(event: PointerEvent): { origin: Vec3; dir: Vec3 } {
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    const width = Math.max(rect.width, 1);
+    const height = Math.max(rect.height, 1);
+    this.pointer.set(((event.clientX - rect.left) / width) * 2 - 1, -((event.clientY - rect.top) / height) * 2 + 1);
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+    const origin = this.raycaster.ray.origin;
+    const dir = this.raycaster.ray.direction;
+    return { origin: { x: origin.x, y: origin.y, z: origin.z }, dir: { x: dir.x, y: dir.y, z: dir.z } };
+  }
+
+  private propIdFrom(object: Object3D | null) {
+    let current = object;
+    while (current) {
+      if (typeof current.userData.propId === "string") return current.userData.propId as string;
+      current = current.parent;
+    }
+    return null;
+  }
+
+  private beginGizmo(event: PointerEvent, kind: "translate" | "plane" | "rotate" | "scale", axis: Axis | "xy" | "xz" | "yz" | "all") {
+    const ray = this.pointerRay(event);
+    const originV = this.gizmo.root.position;
+    const origin = { x: originV.x, y: originV.y, z: originV.z };
+    const axisName: Axis = axis === "x" || axis === "y" || axis === "z" ? axis : "y";
+    const dirV = this.gizmo.worldAxis(axisName);
+    const dir = { x: dirV.x, y: dirV.y, z: dirV.z };
+    const normalV = kind === "plane" && (axis === "xy" || axis === "xz" || axis === "yz") ? this.gizmo.worldNormal(axis) : dirV;
+    const normal = { x: normalV.x, y: normalV.y, z: normalV.z };
+    const startT = closestLineT(origin, dir, ray.origin, ray.dir);
+    const startHit = (kind === "plane" ? rayPlane(origin, normal, ray.origin, ray.dir) : kind === "rotate" ? rayPlane(origin, dir, ray.origin, ray.dir) : null) ?? origin;
+    this.gizmoDrag = {
+      pointerId: event.pointerId,
+      kind,
+      axis: axis === "x" || axis === "y" || axis === "z" || axis === "all" ? axis : "all",
+      origin,
+      dir,
+      normal,
+      startT,
+      startHit,
+      startPointerX: event.clientX,
+      startPointerY: event.clientY,
+      startAngle: this.pointerTurn(event.clientX, event.clientY, origin),
+    };
+    this.controls.enabled = false;
+    this.renderer.domElement.setPointerCapture(event.pointerId);
+    this.gizmoHandler?.({ phase: "start" });
+  }
+
   private onPointerDown = (event: PointerEvent) => {
-    if (!this.moveTarget || event.button !== 0) return;
+    if (event.button !== 0) return;
+    this.pointerRay(event);
+    if (this.gizmo.root.visible) {
+      const gizmoHit = this.raycaster.intersectObject(this.gizmo.root, true).find((hit) => this.drawn(hit.object));
+      const handle = gizmoHit ? this.gizmo.handleOf(gizmoHit.object) : null;
+      if (handle && this.gizmoHandler) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        this.beginGizmo(event, handle.kind, handle.axis);
+        return;
+      }
+    }
+    const propHit = this.raycaster.intersectObject(this.propRoot, true).find((hit) => this.drawn(hit.object) && this.propIdFrom(hit.object));
+    const propId = propHit ? this.propIdFrom(propHit.object) : null;
+    if (propId && this.pickHandler) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.pickHandler(propId, event.shiftKey);
+      return;
+    }
+    if (!this.moveTarget) return;
     const startPosition = this.movedPosition();
     if (!startPosition) return;
     event.preventDefault();
@@ -172,6 +315,49 @@ export class StudioEngine {
   };
 
   private onPointerMove = (event: PointerEvent) => {
+    if (this.gizmoDrag && this.gizmoDrag.pointerId === event.pointerId) {
+      event.preventDefault();
+      const drag = this.gizmoDrag;
+      const ray = this.pointerRay(event);
+      const snap = snapActive(this.gizmoSnap, event.ctrlKey || event.metaKey);
+      const fine = event.shiftKey;
+      let distance = 0;
+      let degrees = 0;
+      let factor = 1;
+      let delta: Vec3 = { x: 0, y: 0, z: 0 };
+      if (drag.kind === "translate") {
+        distance = closestLineT(drag.origin, drag.dir, ray.origin, ray.dir) - drag.startT;
+      } else if (drag.kind === "plane") {
+        const hit = rayPlane(drag.origin, drag.normal, ray.origin, ray.dir);
+        if (hit) delta = { x: hit.x - drag.startHit.x, y: hit.y - drag.startHit.y, z: hit.z - drag.startHit.z };
+      } else if (drag.kind === "rotate") {
+        const hit = rayPlane(drag.origin, drag.dir, ray.origin, ray.dir);
+        const planeDegrees = hit ? signedAngle(drag.origin, drag.dir, drag.startHit, hit) : 0;
+        degrees = Math.abs(planeDegrees) > 0.01 ? planeDegrees : this.screenTurn(event.clientX, event.clientY, drag);
+      } else {
+        if (drag.axis === "all") factor = Math.max(0.05, 1 + (drag.startPointerY - event.clientY) / 120);
+        else {
+          const t = closestLineT(drag.origin, drag.dir, ray.origin, ray.dir);
+          factor = Math.abs(drag.startT) < 0.75 ? 1 + (t - drag.startT) / 8 : t / drag.startT;
+        }
+      }
+      if (!Number.isFinite(distance)) distance = 0;
+      if (!Number.isFinite(degrees)) degrees = 0;
+      if (!Number.isFinite(factor) || factor === 0) factor = 1;
+      this.gizmoHandler?.({
+        phase: "move",
+        kind: drag.kind,
+        axis: drag.axis,
+        space: this.gizmoSpace,
+        snap,
+        fine,
+        distance,
+        degrees,
+        factor,
+        delta,
+      });
+      return;
+    }
     if (!this.drag || this.drag.pointerId !== event.pointerId) return;
     const target = this.moveTarget;
     if (!target) return;
@@ -204,6 +390,14 @@ export class StudioEngine {
   };
 
   private onPointerUp = (event: PointerEvent) => {
+    if (this.gizmoDrag && this.gizmoDrag.pointerId === event.pointerId) {
+      const canvas = this.renderer.domElement;
+      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+      this.gizmoDrag = null;
+      this.controls.enabled = !this.moveTarget;
+      this.gizmoHandler?.({ phase: "end" });
+      return;
+    }
     if (!this.drag || this.drag.pointerId !== event.pointerId) return;
     const canvas = this.renderer.domElement;
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
@@ -219,6 +413,7 @@ export class StudioEngine {
     this.lastTick = now;
     this.controls.update();
     this.poseAll(dt);
+    this.gizmo.update(this.camera);
     for (const rig of this.rigs.values()) {
       rig.nametag.quaternion.copy(this.camera.quaternion);
       rig.bubble.quaternion.copy(this.camera.quaternion);
@@ -285,30 +480,69 @@ export class StudioEngine {
     this.poseAll(0);
   }
 
+  private propSamples(draft: SceneDraft) {
+    const clip = draft.propClip;
+    if (!clip?.keyframes.length) return {};
+    const scrubbing = this.scrub !== null;
+    const playing = draft.players.some((player) => player.clip === "custom" && player.customAnimation);
+    if (!scrubbing && !playing) return {};
+    const time = scrubbing ? (this.scrub?.time ?? 0) : this.getMotionTime(draft.activeId);
+    return samplePropClip(clip, time);
+  }
+
   private syncProps(draft: SceneDraft) {
     const ids = new Set(draft.props.map((prop) => prop.id));
     for (const [id, group] of this.propGroups) {
       if (ids.has(id)) continue;
       this.propRoot.remove(group);
+      disposePropGroup(group);
       this.propGroups.delete(id);
     }
+    const samples = this.propSamples(draft);
     for (const prop of draft.props) {
       let group = this.propGroups.get(prop.id);
-      if (!group || group.userData.catalogId !== prop.catalogId) {
-        const spec = propSpec(prop.catalogId);
-        if (!spec) continue;
-        if (group) this.propRoot.remove(group);
-        group = buildProp(spec);
+      if (!group || group.userData.catalogId !== prop.catalogId || group.userData.signature !== propSignature(prop.catalogId)) {
+        // The catalog loads asynchronously; unknown ids simply wait or never render.
+        // Custom assets live beside the catalog and can render before it arrives.
+        if (!catalogEntry(prop.catalogId) && !customAsset(prop.catalogId)) continue;
+        if (group) {
+          this.propRoot.remove(group);
+          disposePropGroup(group);
+        }
+        group = createPropGroup(prop.catalogId);
+        group.userData.propId = prop.id;
         group.userData.catalogId = prop.catalogId;
         this.propRoot.add(group);
         this.propGroups.set(prop.id, group);
       }
-      group.position.set(prop.position.x, FOOT_Y + prop.position.y, prop.position.z);
-      group.rotation.y = (prop.rotationY * Math.PI) / 180;
-      group.scale.setScalar(prop.scale);
+      const shown = samples[prop.id];
+      const position = shown?.position ?? prop.position;
+      const rotation = shown?.rotation ?? prop.rotation;
+      const scale = shown?.scale ?? prop.scale;
+      group.position.set(position.x, FOOT_Y + position.y, position.z);
+      group.rotation.set((rotation.x * Math.PI) / 180, (rotation.y * Math.PI) / 180, (rotation.z * Math.PI) / 180);
+      group.scale.set(scale.x, scale.y, scale.z);
+      group.visible = !prop.hidden;
+      const visual = group.getObjectByName("visual");
+      if (visual) visual.position.set(-prop.pivot.x, -prop.pivot.y, -prop.pivot.z);
       const marker = group.getObjectByName("marker");
-      if (marker) marker.visible = !this.markersHidden && prop.id === draft.activePropId;
+      if (marker) marker.visible = !this.markersHidden && !prop.hidden && prop.id === draft.activePropId;
     }
+    this.positionGizmo(draft);
+  }
+
+  private positionGizmo(draft: SceneDraft) {
+    const prop = draft.props.find((item) => item.id === draft.activePropId);
+    const group = prop ? this.propGroups.get(prop.id) : undefined;
+    if (!prop || !group || prop.hidden || prop.locked || !this.gizmoEnabled) {
+      this.gizmo.setVisible(false);
+      return;
+    }
+    this.gizmo.setVisible(true);
+    group.updateWorldMatrix(true, false);
+    const world = new Vector3();
+    group.getWorldPosition(world);
+    this.gizmo.place(world, group.quaternion, this.gizmoSpace);
   }
 
   /** Drop prop meshes so the next sync rebuilds them with the current textures. */
@@ -493,6 +727,22 @@ export class StudioEngine {
     }
   }
 
+  setGizmoOptions(options: { mode: GizmoMode; space: Space; snap: boolean; enabled: boolean }) {
+    this.gizmoSnap = options.snap;
+    this.gizmoSpace = options.space;
+    this.gizmoEnabled = options.enabled;
+    this.gizmo.setMode(options.mode);
+    if (this.draft) this.positionGizmo(this.draft);
+  }
+
+  setGizmoHandler(handler: ((event: GizmoPhase) => void) | null) {
+    this.gizmoHandler = handler;
+  }
+
+  setPickHandler(handler: ((id: string, shift: boolean) => void) | null) {
+    this.pickHandler = handler;
+  }
+
   setMoveTarget(target: MoveTarget | null) {
     this.moveTarget = target;
     this.controls.enabled = !target;
@@ -531,6 +781,7 @@ export class StudioEngine {
 
   setMarkersVisible(visible: boolean) {
     this.markersHidden = !visible;
+    this.gizmo.setCaptureHidden(!visible);
     const active = this.draft?.activePropId;
     for (const [id, group] of this.propGroups) {
       const marker = group.getObjectByName("marker");
@@ -615,6 +866,9 @@ export class StudioEngine {
     canvas.removeEventListener("pointerup", this.onPointerUp);
     canvas.removeEventListener("pointercancel", this.onPointerUp);
     for (const rig of this.rigs.values()) this.disposeRig(rig);
+    for (const group of this.propGroups.values()) disposePropGroup(group);
+    this.gizmo.dispose();
+    this.scene.remove(this.gizmo.root);
     this.propRoot.clear();
     this.propGroups.clear();
     this.gradient.dispose();

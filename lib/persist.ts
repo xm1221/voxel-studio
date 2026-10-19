@@ -1,4 +1,5 @@
 import { animationDocument, parseAnimationDocument } from "./motion.ts";
+import type { PropClip } from "./prop-clip.ts";
 import type { AnimationDef, BackgroundFit, CameraSnapshot, ClipId, Joints, LayerMode, PlayerDraft, SceneDraft, SceneProp } from "./types";
 
 export function layerModeFrom(value: unknown): LayerMode {
@@ -36,8 +37,10 @@ export type SharePayload = {
   camera?: CameraSnapshot;
   players: PlayerPayload[];
   /** Optional. Links from before props shipped omit this and still decode. */
-  props?: SceneProp[];
+  props?: Array<SceneProp & { rotationY?: number }>;
   activePropId?: string | null;
+  /** Prop transform track. Share links include keys, not custom texture bytes. */
+  propClip?: PropClip | null;
 };
 
 export type PlayerPayload = Omit<
@@ -125,13 +128,19 @@ export function toPayload(scene: SceneDraft, camera: CameraSnapshot | undefined,
           props: scene.props.map((prop) => ({
             id: prop.id,
             catalogId: prop.catalogId,
+            name: prop.name,
             position: { ...prop.position },
-            rotationY: prop.rotationY,
-            scale: prop.scale,
+            rotation: { ...prop.rotation },
+            rotationY: prop.rotation.y,
+            scale: { ...prop.scale },
+            pivot: { ...prop.pivot },
+            hidden: prop.hidden,
+            locked: prop.locked,
           })),
           ...(scene.activePropId ? { activePropId: scene.activePropId } : {}),
         }
       : {}),
+    ...(scene.propClip ? { propClip: scene.propClip } : {}),
     players: scene.players.map((player) => ({
       id: player.id,
       name: player.name,

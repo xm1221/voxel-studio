@@ -1,5 +1,4 @@
 import {
-  BoxGeometry,
   CanvasTexture,
   CircleGeometry,
   ClampToEdgeWrapping,
@@ -13,11 +12,15 @@ import {
   TextureLoader,
   type Texture,
 } from "three";
-import type { PropSpec } from "./props";
-import { withBasePath } from "./paths";
+import { catalogEntry, catalogTextureUrl, type CatalogEntry } from "./catalog.ts";
+import { customAsset } from "./custom-assets.ts";
+import { entityDef } from "./entities.ts";
+import { animatedFrame, entityQuads, geometryFromQuads, groupQuads, itemExtrusionQuads, modelQuads, type ModelQuad } from "./model-mesh.ts";
+import type { TintKind } from "./model-types.ts";
+import { withBasePath } from "./paths.ts";
 
-/** Unmodified PNGs from the vanilla 26.3 client. See public/vanilla/SOURCE.md. */
-const ROOT = "/vanilla/26.3";
+/** Bundled, committed vanilla files used by the stage floors. See public/vanilla/SOURCE.md. */
+const STAGE_ROOT = "/vanilla/26.3";
 
 const markerGeometry = new CircleGeometry(7, 28);
 const markerMaterial = new MeshBasicMaterial({
@@ -29,18 +32,17 @@ const markerMaterial = new MeshBasicMaterial({
 
 const loader = new TextureLoader();
 const textures = new Map<string, Texture>();
+const customUrls = new Map<string, string>();
 const stageTextures = new Map<string, Texture>();
-let plainsGrass: [number, number, number] | null = null;
-let stagePlainsGrass: [number, number, number] | null = null;
+const tintCache = new Map<TintKind, Promise<[number, number, number]>>();
+const materials = new Map<string, MeshStandardMaterial>();
+const textureFlags = new Map<string, { cutout: boolean; translucent: boolean }>();
+const materialsByTexture = new Map<string, Set<MeshStandardMaterial>>();
 
 type PackState = { name: string; files: Map<string, Blob> };
 let pack: PackState | null = null;
 const packUrls = new Map<string, string>();
 const packListeners = new Set<() => void>();
-
-function vanillaUrl(file: string) {
-  return withBasePath(`${ROOT}/${file}`);
-}
 
 export function propTexturePack(): { name: string; count: number } | null {
   return pack ? { name: pack.name, count: pack.files.size } : null;
@@ -75,7 +77,33 @@ function revokePackUrls() {
 function dropPropTextures() {
   for (const texture of textures.values()) texture.dispose();
   textures.clear();
-  plainsGrass = null;
+  for (const material of materials.values()) material.dispose();
+  materials.clear();
+  materialsByTexture.clear();
+  tintCache.clear();
+  textureFlags.clear();
+}
+
+/** Data URLs for `custom:` texture keys. Vanilla paths stay as files. */
+export function setCustomTextures(next: Record<string, string>) {
+  customUrls.clear();
+  for (const [key, url] of Object.entries(next)) customUrls.set(key, url);
+  for (const key of [...textures.keys()]) {
+    if (!key.startsWith("custom:") && !key.startsWith("data:")) continue;
+    textures.get(key)?.dispose();
+    textures.delete(key);
+    textureFlags.delete(key);
+    const used = materialsByTexture.get(key);
+    if (!used) continue;
+    for (const material of used) {
+      material.dispose();
+      for (const [materialKey, value] of materials) {
+        if (value === material) materials.delete(materialKey);
+      }
+    }
+    materialsByTexture.delete(key);
+  }
+  for (const listener of packListeners) listener();
 }
 
 function packFileUrl(file: string) {
@@ -100,11 +128,77 @@ function prepare(texture: Texture) {
   return texture;
 }
 
+/** Animated textures stack frames vertically; sample only the first square one. */
+function firstFrame(texture: Texture) {
+  const image = texture.image as { width?: number; height?: number } | undefined;
+  const frame = image?.width && image.height ? animatedFrame(image.width, image.height) : null;
+  if (!frame) return;
+  texture.repeat.set(1, frame.repeatY);
+  texture.offset.set(0, frame.offsetY);
+  texture.needsUpdate = true;
+}
+
+function imageDataOf(texture: Texture): { width: number; height: number; data: Uint8ClampedArray } | null {
+  const image = texture.image as (CanvasImageSource & { width?: number; height?: number }) | undefined;
+  if (!image?.width || !image.height || typeof document === "undefined") return null;
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return null;
+    context.drawImage(image, 0, 0);
+    const data = context.getImageData(0, 0, canvas.width, canvas.height);
+    return { width: data.width, height: data.height, data: data.data };
+  } catch {
+    return null;
+  }
+}
+
+/** Cutout textures get alphaTest and double-sided faces; partly transparent ones stay translucent. */
+function scanAlpha(file: string, texture: Texture) {
+  if (textureFlags.has(file)) return;
+  // Entity skins reserve transparent padding outside box-UV regions. Nearest
+  // filtering at texel edges can sample that padding; treating them as cutout
+  // punches holes in otherwise solid cubes. Skip cutout for entity/*.
+  if (file.startsWith("entity/")) {
+    const flags = { cutout: false, translucent: false };
+    textureFlags.set(file, flags);
+    for (const material of materialsByTexture.get(file) ?? []) applyTextureFlags(material, flags);
+    return;
+  }
+  const image = imageDataOf(texture);
+  if (!image) return;
+  let cutout = false;
+  let translucent = false;
+  for (let i = 3; i < image.data.length; i += 4) {
+    if (image.data[i] === 0) cutout = true;
+    else if (image.data[i] < 255) translucent = true;
+    if (cutout && translucent) break;
+  }
+  const flags = { cutout, translucent };
+  textureFlags.set(file, flags);
+  for (const material of materialsByTexture.get(file) ?? []) applyTextureFlags(material, flags);
+}
+
+function applyTextureFlags(material: MeshStandardMaterial, flags: { cutout: boolean; translucent: boolean }) {
+  material.alphaTest = flags.cutout ? 0.1 : 0;
+  if (flags.cutout) material.side = DoubleSide;
+  material.transparent = flags.translucent;
+  material.depthWrite = !flags.translucent;
+  material.roughness = flags.translucent ? 0.15 : 1;
+  material.needsUpdate = true;
+}
+
 function textureFor(file: string) {
   const cached = textures.get(file);
   if (cached) return cached;
-  const texture = loader.load(packFileUrl(file) ?? vanillaUrl(file), (loaded) => {
+  const custom = customUrls.get(file);
+  const url = custom ?? (file.startsWith("data:") ? file : (packFileUrl(file) ?? catalogTextureUrl(file)));
+  const texture = loader.load(url, (loaded) => {
     prepare(loaded);
+    firstFrame(loaded);
+    scanAlpha(file, loaded);
   });
   prepare(texture);
   textures.set(file, texture);
@@ -115,7 +209,7 @@ function textureFor(file: string) {
 export function bundledTexture(file: string) {
   const cached = stageTextures.get(file);
   if (cached) return cached;
-  const texture = loader.load(vanillaUrl(file), (loaded) => {
+  const texture = loader.load(withBasePath(`${STAGE_ROOT}/${file}`), (loaded) => {
     prepare(loaded);
   });
   prepare(texture);
@@ -123,50 +217,21 @@ export function bundledTexture(file: string) {
   return texture;
 }
 
-/** Plains grass color, sampled once from a colormap URL. */
-function plainsTint(url: string, slot: "prop" | "stage"): Promise<[number, number, number]> {
-  const current = slot === "prop" ? plainsGrass : stagePlainsGrass;
-  if (current) return Promise.resolve(current);
-  return new Promise((resolve) => {
-    const image = new Image();
-    const finish = (tint: [number, number, number]) => {
-      if (slot === "prop") plainsGrass = tint;
-      else stagePlainsGrass = tint;
-      resolve(tint);
-    };
-    image.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = image.width;
-      canvas.height = image.height;
-      const context = canvas.getContext("2d");
-      if (!context) {
-        finish([145, 189, 89]);
-        return;
-      }
-      context.drawImage(image, 0, 0);
-      const temperature = 0.8;
-      const humidity = 0.4;
-      const x = Math.floor((1 - temperature) * 255);
-      const y = Math.floor((1 - humidity * temperature) * 255);
-      const pixel = context.getImageData(x, y, 1, 1).data;
-      finish([pixel[0], pixel[1], pixel[2]]);
-    };
-    image.onerror = () => finish([145, 189, 89]);
-    image.src = url;
-  });
-}
+let stageGrassTint: Promise<[number, number, number]> | null = null;
 
-function tintedTop(cache: Map<string, Texture>, topUrl: string, tint: Promise<[number, number, number]>) {
+/** The stage floors always sample the bundled plains colormap. */
+export function bundledGrassTop() {
   const key = "block/grass_block_top.png#plains";
-  const cached = cache.get(key);
+  const cached = stageTextures.get(key);
   if (cached) return cached;
   const canvas = document.createElement("canvas");
   canvas.width = 16;
   canvas.height = 16;
   const texture = new CanvasTexture(canvas);
   prepare(texture);
-  cache.set(key, texture);
-  void tint.then((color) => {
+  stageTextures.set(key, texture);
+  stageGrassTint ??= sampleTint(withBasePath(`${STAGE_ROOT}/colormap/grass.png`), [145, 189, 89]);
+  void stageGrassTint.then((color) => {
     const image = new Image();
     image.onload = () => {
       const painted = document.createElement("canvas");
@@ -185,214 +250,125 @@ function tintedTop(cache: Map<string, Texture>, topUrl: string, tint: Promise<[n
       texture.image = painted;
       texture.needsUpdate = true;
     };
-    image.src = topUrl;
+    image.src = withBasePath(`${STAGE_ROOT}/block/grass_block_top.png`);
   });
   return texture;
 }
 
-function tintedGrassTop() {
-  return tintedTop(textures, packFileUrl("block/grass_block_top.png") ?? vanillaUrl("block/grass_block_top.png"), plainsTint(packFileUrl("colormap/grass.png") ?? vanillaUrl("colormap/grass.png"), "prop"));
-}
-
-export function bundledGrassTop() {
-  return tintedTop(stageTextures, vanillaUrl("block/grass_block_top.png"), plainsTint(vanillaUrl("colormap/grass.png"), "stage"));
-}
-
-function faceMaterial(file: string, options?: { transparent?: boolean; tintTop?: boolean }) {
-  const map = options?.tintTop ? tintedGrassTop() : textureFor(file);
-  return new MeshStandardMaterial({
-    map,
-    roughness: options?.transparent ? 0.05 : 1,
-    metalness: 0,
-    transparent: Boolean(options?.transparent),
-    alphaTest: options?.transparent ? 0.15 : 0,
-    depthWrite: !options?.transparent,
+function sampleTint(url: string, fallback: [number, number, number]): Promise<[number, number, number]> {
+  return new Promise((resolve) => {
+    if (typeof Image === "undefined") {
+      resolve(fallback);
+      return;
+    }
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        resolve(fallback);
+        return;
+      }
+      context.drawImage(image, 0, 0);
+      const temperature = 0.8;
+      const humidity = 0.4;
+      const x = Math.floor((1 - temperature) * 255);
+      const y = Math.floor((1 - humidity * temperature) * 255);
+      const pixel = context.getImageData(x, y, 1, 1).data;
+      resolve([pixel[0], pixel[1], pixel[2]]);
+    };
+    image.onerror = () => resolve(fallback);
+    image.src = url;
   });
 }
 
-function blockMaterials(files: { px: string; nx: string; py: string; ny: string; pz: string; nz: string }, tintTop = false) {
-  return [
-    faceMaterial(files.px),
-    faceMaterial(files.nx),
-    faceMaterial(files.py, { tintTop }),
-    faceMaterial(files.ny),
-    faceMaterial(files.pz),
-    faceMaterial(files.nz),
-  ];
+/** Vanilla tint colors: plains climate for grass and foliage, fixed water, full-power redstone. */
+export function tintColor(kind: TintKind): Promise<[number, number, number]> {
+  const cached = tintCache.get(kind);
+  if (cached) return cached;
+  let pending: Promise<[number, number, number]>;
+  if (kind === "grass") pending = sampleTint(packFileUrl("colormap/grass.png") ?? catalogTextureUrl("colormap/grass.png"), [145, 189, 89]);
+  else if (kind === "foliage") pending = sampleTint(packFileUrl("colormap/foliage.png") ?? catalogTextureUrl("colormap/foliage.png"), [119, 171, 47]);
+  else if (kind === "water") pending = Promise.resolve([63, 118, 228]);
+  else pending = Promise.resolve(redstoneTint(15));
+  tintCache.set(kind, pending);
+  return pending;
 }
 
-const BLOCK_FACES: Record<string, { px: string; nx: string; py: string; ny: string; pz: string; nz: string; tintTop?: boolean; transparent?: boolean }> = {
-  grass: {
-    px: "block/grass_block_side.png",
-    nx: "block/grass_block_side.png",
-    py: "block/grass_block_top.png",
-    ny: "block/dirt.png",
-    pz: "block/grass_block_side.png",
-    nz: "block/grass_block_side.png",
-    tintTop: true,
-  },
-  dirt: faces("block/dirt.png"),
-  stone: faces("block/stone.png"),
-  log: {
-    px: "block/oak_log.png",
-    nx: "block/oak_log.png",
-    py: "block/oak_log_top.png",
-    ny: "block/oak_log_top.png",
-    pz: "block/oak_log.png",
-    nz: "block/oak_log.png",
-  },
-  planks: faces("block/oak_planks.png"),
-  sand: faces("block/sand.png"),
-  tnt: {
-    px: "block/tnt_side.png",
-    nx: "block/tnt_side.png",
-    py: "block/tnt_top.png",
-    ny: "block/tnt_bottom.png",
-    pz: "block/tnt_side.png",
-    nz: "block/tnt_side.png",
-  },
-  crafting: {
-    px: "block/crafting_table_side.png",
-    nx: "block/crafting_table_front.png",
-    py: "block/crafting_table_top.png",
-    ny: "block/oak_planks.png",
-    pz: "block/crafting_table_front.png",
-    nz: "block/crafting_table_side.png",
-  },
-  glass: faces("block/glass.png"),
-};
-
-function faces(file: string) {
-  return { px: file, nx: file, py: file, ny: file, pz: file, nz: file };
+/** Vanilla redstone wire formula: power 15 is full red, lower power darkens. */
+export function redstoneTint(power: number): [number, number, number] {
+  const level = Math.max(0, Math.min(15, Math.round(power)));
+  const channel = Math.round((level * 255) / 15);
+  return [channel, 0, 0];
 }
 
-function cutoutMaterial(file: string) {
-  return new MeshStandardMaterial({
-    map: textureFor(file),
-    roughness: 1,
-    metalness: 0,
-    transparent: true,
-    alphaTest: 0.4,
-    side: DoubleSide,
-    depthWrite: true,
+/** One material per texture+tint, shared by every prop that samples it. */
+function materialFor(file: string, tint?: TintKind) {
+  const key = `${file}\u0000${tint ?? ""}`;
+  const cached = materials.get(key);
+  if (cached) return cached;
+  const material = new MeshStandardMaterial({ map: textureFor(file), roughness: 1, metalness: 0 });
+  const flags = textureFlags.get(file);
+  if (flags) applyTextureFlags(material, flags);
+  if (tint) {
+    void tintColor(tint).then(([r, g, b]) => {
+      material.color.setRGB(r / 255, g / 255, b / 255, SRGBColorSpace);
+      material.needsUpdate = true;
+    });
+  }
+  let set = materialsByTexture.get(file);
+  if (!set) {
+    set = new Set();
+    materialsByTexture.set(file, set);
+  }
+  set.add(material);
+  materials.set(key, material);
+  return material;
+}
+
+/** One mesh with per-texture groups and a matching material array. */
+function meshFromQuads(quads: ModelQuad[], center: "block" | "entity" = "block") {
+  const groups = groupQuads(quads);
+  const geometry = geometryFromQuads(groups.flatMap((group) => group.quads), { center });
+  let start = 0;
+  const materialsForGroups = groups.map((group, index) => {
+    geometry.addGroup(start, group.quads.length * 6, index);
+    start += group.quads.length * 6;
+    return materialFor(group.texture, group.tint);
   });
-}
-
-function sprite(file: string, height: number) {
-  const mesh = new Mesh(new BoxGeometry(height, height, 0.6), cutoutMaterial(file));
-  mesh.position.y = height / 2;
-  mesh.castShadow = true;
-  return mesh;
-}
-
-type CubeUv = { tu: number; tv: number; tw: number; th: number; td: number; texW: number; texH: number };
-
-function cubeGeometry(w: number, h: number, d: number, uv: CubeUv) {
-  const geometry = new BoxGeometry(w, h, d);
-  const attr = geometry.attributes.uv;
-  const { tu, tv, tw, th, td, texW, texH } = uv;
-  const regions: Array<[number, number, number, number]> = [
-    [tu + td + tw, tv + td, td, th],
-    [tu, tv + td, td, th],
-    [tu + td, tv, tw, td],
-    [tu + td + tw, tv, tw, td],
-    [tu + td, tv + td, tw, th],
-    [tu + td + tw + td, tv + td, tw, th],
-  ];
-  regions.forEach(([mu, mv, mw, mh], face) => {
-    const u0 = mu / texW;
-    const u1 = (mu + mw) / texW;
-    const vTop = 1 - mv / texH;
-    const vBot = 1 - (mv + mh) / texH;
-    const offset = face * 4;
-    attr.setXY(offset, u0, vTop);
-    attr.setXY(offset + 1, u1, vTop);
-    attr.setXY(offset + 2, u0, vBot);
-    attr.setXY(offset + 3, u1, vBot);
-  });
-  attr.needsUpdate = true;
-  return geometry;
-}
-
-function part(w: number, h: number, d: number, uv: CubeUv, material: MeshStandardMaterial, x: number, y: number, z: number) {
-  const mesh = new Mesh(cubeGeometry(w, h, d, uv), material);
-  mesh.position.set(x, y, z);
+  const mesh = new Mesh(geometry, materialsForGroups);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   return mesh;
 }
 
-function entityMaterial(file: string, transparent = false) {
-  return new MeshStandardMaterial({
-    map: textureFor(file),
-    roughness: 1,
-    metalness: 0,
-    transparent,
-    alphaTest: transparent ? 0.05 : 0.2,
-    depthWrite: !transparent,
+/**
+ * Vanilla draws generated items as a pixel-thin extrusion: front and back
+ * sprites plus one side face per edge pixel. The first pass is a flat slab;
+ * once the layer images load, swap in the extruded geometry.
+ */
+function upgradeGeneratedItem(mesh: Mesh, layers: readonly string[]) {
+  const loaded = layers.map((layer) => {
+    const image = imageDataOf(textureFor(layer));
+    return image ? { texture: layer, ...image } : null;
   });
-}
-
-function addCreeper(group: Group) {
-  const material = entityMaterial("entity/creeper.png");
-  const sheet = { texW: 64, texH: 32 };
-  group.add(part(8, 8, 8, { tu: 0, tv: 0, tw: 8, th: 8, td: 8, ...sheet }, material, 0, 22, 0));
-  group.add(part(8, 12, 4, { tu: 16, tv: 16, tw: 8, th: 12, td: 4, ...sheet }, material, 0, 12, 0));
-  const leg = { tu: 0, tv: 16, tw: 4, th: 6, td: 4, ...sheet };
-  for (const [x, z] of [
-    [-2, -2],
-    [2, -2],
-    [-2, 2],
-    [2, 2],
-  ] as const) {
-    group.add(part(4, 6, 4, leg, material, x, 3, z));
-  }
-}
-
-function addPig(group: Group) {
-  const material = entityMaterial("entity/pig.png");
-  const sheet = { texW: 64, texH: 64 };
-  const body = part(10, 16, 8, { tu: 28, tv: 8, tw: 10, th: 16, td: 8, ...sheet }, material, 0, 10, 0);
-  body.rotation.x = Math.PI / 2;
-  group.add(body);
-  group.add(part(8, 8, 8, { tu: 0, tv: 0, tw: 8, th: 8, td: 8, ...sheet }, material, 0, 12, 10));
-  group.add(part(4, 3, 1, { tu: 16, tv: 16, tw: 4, th: 3, td: 1, ...sheet }, material, 0, 11, 14.6));
-  const leg = { tu: 0, tv: 16, tw: 4, th: 6, td: 4, ...sheet };
-  for (const [x, z] of [
-    [-3, 6],
-    [3, 6],
-    [-3, -5],
-    [3, -5],
-  ] as const) {
-    group.add(part(4, 6, 4, leg, material, x, 3, z));
-  }
-}
-
-function addChicken(group: Group) {
-  const material = entityMaterial("entity/chicken.png");
-  const sheet = { texW: 64, texH: 32 };
-  const body = part(6, 8, 6, { tu: 0, tv: 9, tw: 6, th: 8, td: 6, ...sheet }, material, 0, 8, 0);
-  body.rotation.x = Math.PI / 2;
-  group.add(body);
-  group.add(part(4, 6, 3, { tu: 0, tv: 0, tw: 4, th: 6, td: 3, ...sheet }, material, 0, 13, 4));
-  group.add(part(4, 2, 2, { tu: 14, tv: 0, tw: 4, th: 2, td: 2, ...sheet }, material, 0, 11, 6.2));
-  group.add(part(2, 2, 2, { tu: 14, tv: 4, tw: 2, th: 2, td: 2, ...sheet }, material, 0, 9.2, 5.6));
-  const leg = { tu: 26, tv: 0, tw: 3, th: 5, td: 3, ...sheet };
-  group.add(part(3, 5, 3, leg, material, -1.5, 2.5, 0));
-  group.add(part(3, 5, 3, leg, material, 1.5, 2.5, 0));
-  const wing = { tu: 24, tv: 13, tw: 1, th: 4, td: 6, ...sheet };
-  group.add(part(1, 4, 6, wing, material, -3.2, 9, 0));
-  group.add(part(1, 4, 6, wing, material, 3.2, 9, 0));
-}
-
-function addSlime(group: Group) {
-  const outer = entityMaterial("entity/slime.png", true);
-  const inner = entityMaterial("entity/slime.png");
-  const sheet = { texW: 64, texH: 32 };
-  const shell = part(8, 8, 8, { tu: 0, tv: 0, tw: 8, th: 8, td: 8, ...sheet }, outer, 0, 4, 0);
-  shell.castShadow = false;
-  group.add(shell);
-  group.add(part(6, 6, 6, { tu: 0, tv: 16, tw: 6, th: 6, td: 6, ...sheet }, inner, 0, 5, 0));
+  if (loaded.some((layer) => !layer)) return false;
+  const quads = itemExtrusionQuads(loaded as Array<{ texture: string; width: number; height: number; data: Uint8ClampedArray }>);
+  if (!quads.length) return false;
+  const groups = groupQuads(quads);
+  const geometry = geometryFromQuads(groups.flatMap((group) => group.quads));
+  let start = 0;
+  const next = groups.map((group, index) => {
+    geometry.addGroup(start, group.quads.length * 6, index);
+    start += group.quads.length * 6;
+    return materialFor(group.texture, group.tint);
+  });
+  mesh.geometry.dispose();
+  mesh.geometry = geometry;
+  mesh.material = next;
+  return true;
 }
 
 function addMarker(group: Group) {
@@ -404,36 +380,83 @@ function addMarker(group: Group) {
   group.add(marker);
 }
 
-export function buildProp(spec: PropSpec) {
+function addCompiledModel(parent: Group, model: NonNullable<CatalogEntry["model"]>) {
+  const mesh = meshFromQuads(modelQuads(model));
+  parent.add(mesh);
+  const layers = model.layers;
+  if (!layers?.length) return;
+  const tryUpgrade = (attempt: number) => {
+    if (upgradeGeneratedItem(mesh, layers) || attempt >= 120) return;
+    setTimeout(() => tryUpgrade(attempt + 1), 50);
+  };
+  tryUpgrade(0);
+}
+
+export function propSignature(catalogId: string) {
+  const custom = customAsset(catalogId);
+  if (custom) {
+    const bytes = Object.values(custom.textures).reduce((sum, url) => sum + url.length, 0);
+    return `custom:${custom.id}:${custom.model.elements.length}:${bytes}`;
+  }
+  const entry = catalogEntry(catalogId);
+  if (entry?.kind === "entity") return `entity:${entry.id}`;
+  if (entry?.model) return `model:${entry.id}:${entry.model.elements.length}:${entry.model.layers?.length ?? 0}`;
+  if (entry) return `entry:${entry.id}`;
+  return `missing:${catalogId}`;
+}
+
+/**
+ * Scene root for one prop. The mesh sits on a `visual` child so the gizmo
+ * pivot can slide it without moving the marker or the rotation origin.
+ */
+export function createPropGroup(catalogId: string) {
+  const root = new Group();
+  root.name = `prop-${catalogId}`;
+  const visual = new Group();
+  visual.name = "visual";
+  root.add(visual);
+  const custom = customAsset(catalogId);
+  if (custom) {
+    addCompiledModel(visual, custom.model);
+  } else {
+    const entry = catalogEntry(catalogId);
+    if (entry) {
+      const built = buildProp(entry);
+      const marker = built.getObjectByName("marker");
+      marker?.removeFromParent();
+      while (built.children.length) visual.add(built.children[0]);
+    }
+  }
+  addMarker(root);
+  root.userData.catalogId = catalogId;
+  root.userData.signature = propSignature(catalogId);
+  return root;
+}
+
+/** Build the scene mesh for a catalog entry. Unknown entries give an empty group. */
+export function buildProp(entry: CatalogEntry) {
   const group = new Group();
-  group.name = `prop-${spec.id}`;
-  if (spec.kind === "block") {
-    const facesFor = BLOCK_FACES[spec.id] ?? BLOCK_FACES.stone;
-    const materials =
-      spec.id === "glass"
-        ? faceMaterial("block/glass.png", { transparent: true })
-        : blockMaterials(facesFor, Boolean(facesFor.tintTop));
-    const mesh = new Mesh(new BoxGeometry(16, 16, 16), materials);
-    mesh.position.y = 8;
-    mesh.castShadow = spec.id !== "glass";
-    mesh.receiveShadow = true;
-    group.add(mesh);
-  } else if (spec.id === "sword") {
-    group.add(sprite("item/diamond_sword.png", 22));
-  } else if (spec.id === "pickaxe") {
-    group.add(sprite("item/diamond_pickaxe.png", 22));
-  } else if (spec.id === "apple") {
-    group.add(sprite("item/apple.png", 12));
-  } else if (spec.id === "torch") {
-    group.add(sprite("block/torch.png", 16));
-  } else if (spec.id === "creeper") {
-    addCreeper(group);
-  } else if (spec.id === "pig") {
-    addPig(group);
-  } else if (spec.id === "chicken") {
-    addChicken(group);
-  } else if (spec.id === "slime") {
-    addSlime(group);
+  group.name = `prop-${entry.id}`;
+  if (entry.kind === "entity") {
+    const def = entityDef(entry.id);
+    if (def) {
+      const mesh = meshFromQuads(entityQuads(def), "entity");
+      // entityQuads winds faces outward after the vanilla world map. Keep
+      // DoubleSide for entity skins (they have unused transparent texels and
+      // alphaTest cutout); translucent skins also need both sides.
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const mat of mats) {
+        mat.side = DoubleSide;
+        if (def.translucent) {
+          mat.transparent = true;
+          mat.depthWrite = false;
+        }
+      }
+      if (def.translucent) mesh.castShadow = false;
+      group.add(mesh);
+    }
+  } else if (entry.model) {
+    addCompiledModel(group, entry.model);
   }
   addMarker(group);
   return group;
