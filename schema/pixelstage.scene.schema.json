@@ -1,0 +1,301 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pixelstage.local/schema/pixelstage.scene.schema.json",
+  "title": "Pixelstage scene",
+  "description": "A reproducible scene for the Pixelstage studio, window.pixelstage, and `npm run render`.",
+  "type": "object",
+  "required": ["v", "cast"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "v": {
+      "const": 2,
+      "description": "Scene document version. v1 files are keyframe animations and are loaded through a different path."
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "maxLength": 120 },
+        "author": { "type": "string", "maxLength": 120 },
+        "note": { "type": "string", "maxLength": 500 }
+      }
+    },
+    "cast": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4,
+      "items": { "$ref": "#/$defs/castMember" }
+    },
+    "camera": { "$ref": "#/$defs/camera" },
+    "stage": { "$ref": "#/$defs/stage" },
+    "props": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/prop" }
+    },
+    "text": { "$ref": "#/$defs/text" },
+    "export": { "$ref": "#/$defs/export" }
+  },
+  "$defs": {
+    "vec3": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "x": { "type": "number", "minimum": -64, "maximum": 64 },
+        "y": { "type": "number", "minimum": -16, "maximum": 64 },
+        "z": { "type": "number", "minimum": -64, "maximum": 64 }
+      }
+    },
+    "triple": {
+      "type": "array",
+      "items": { "type": "number" },
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "joints": {
+      "type": "object",
+      "description": "Partial joint angles in degrees. Omitted joints keep the pose's value.",
+      "additionalProperties": false,
+      "properties": {
+        "headX": { "type": "number", "minimum": -40, "maximum": 40 },
+        "headY": { "type": "number", "minimum": -55, "maximum": 55 },
+        "bodyX": { "type": "number", "minimum": -30, "maximum": 30 },
+        "rArmX": { "type": "number", "minimum": -170, "maximum": 170 },
+        "rArmZ": { "type": "number", "minimum": -180, "maximum": 40 },
+        "rElbow": { "type": "number", "minimum": -150, "maximum": 30 },
+        "lArmX": { "type": "number", "minimum": -170, "maximum": 170 },
+        "lArmZ": { "type": "number", "minimum": -40, "maximum": 180 },
+        "lElbow": { "type": "number", "minimum": -150, "maximum": 30 },
+        "rLegX": { "type": "number", "minimum": -120, "maximum": 70 },
+        "rKnee": { "type": "number", "minimum": -15, "maximum": 150 },
+        "lLegX": { "type": "number", "minimum": -120, "maximum": 70 },
+        "lKnee": { "type": "number", "minimum": -15, "maximum": 150 }
+      }
+    },
+    "preset": {
+      "type": "string",
+      "enum": [
+        "none",
+        "idle",
+        "walk",
+        "run",
+        "wave",
+        "cheer",
+        "crouch",
+        "attack",
+        "fly",
+        "swim",
+        "nod",
+        "spin",
+        "jump",
+        "sit"
+      ]
+    },
+    "ease": { "type": "string", "enum": ["linear", "smoothstep", "ease-in-out"] },
+    "keyframe": {
+      "type": "object",
+      "required": ["time"],
+      "additionalProperties": false,
+      "properties": {
+        "time": { "type": "number", "minimum": 0, "maximum": 30 },
+        "joints": { "$ref": "#/$defs/joints" },
+        "bob": { "type": "number", "minimum": -8, "maximum": 8 },
+        "sway": { "type": "number", "minimum": -5, "maximum": 5 },
+        "roll": { "type": "number", "minimum": -5, "maximum": 5 },
+        "cape": { "type": "number", "minimum": -45, "maximum": 45 },
+        "yaw": { "type": "number", "minimum": -720, "maximum": 720, "description": "Body turn in degrees." },
+        "ease": { "$ref": "#/$defs/ease" }
+      }
+    },
+    "animation": {
+      "type": "object",
+      "required": ["v", "name", "duration", "loop", "keyframes"],
+      "additionalProperties": false,
+      "properties": {
+        "v": { "const": 1 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 48 },
+        "duration": { "type": "number", "minimum": 0.2, "maximum": 30 },
+        "loop": { "type": "boolean" },
+        "keyframes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 240,
+          "items": { "$ref": "#/$defs/keyframe" }
+        }
+      }
+    },
+    "motion": {
+      "oneOf": [
+        { "$ref": "#/$defs/preset" },
+        {
+          "type": "object",
+          "required": ["preset"],
+          "additionalProperties": false,
+          "properties": {
+            "preset": { "$ref": "#/$defs/preset" },
+            "speed": { "type": "number", "minimum": 0.25, "maximum": 3 }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["animation"],
+          "additionalProperties": false,
+          "properties": {
+            "speed": { "type": "number", "minimum": 0.25, "maximum": 3 },
+            "animation": { "$ref": "#/$defs/animation" }
+          }
+        },
+        { "$ref": "#/$defs/animation" }
+      ]
+    },
+    "castMember": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,24}$" },
+        "name": { "type": "string", "maxLength": 32 },
+        "skin": {
+          "type": "string",
+          "description": "\"steve\", \"alex\", an http(s) image URL, or a data:image URL."
+        },
+        "username": {
+          "type": "string",
+          "maxLength": 16,
+          "description": "Mojang name. The studio fetches it through /api/player; the CLI needs the skin inlined."
+        },
+        "model": { "type": "string", "enum": ["default", "slim"] },
+        "pose": {
+          "oneOf": [
+            { "type": "string", "enum": ["idle", "wave", "flex", "think", "salute", "sit", "hero", "walk"] },
+            { "$ref": "#/$defs/joints" }
+          ]
+        },
+        "motion": { "$ref": "#/$defs/motion" },
+        "position": { "$ref": "#/$defs/vec3" },
+        "scale": { "type": "number", "minimum": 0.5, "maximum": 1.6 },
+        "nametag": { "type": "string", "maxLength": 32 },
+        "bubble": { "type": "string", "maxLength": 64 },
+        "outer": { "type": "boolean", "description": "Show the outer skin layer." },
+        "layers": { "type": "string", "enum": ["flat", "voxel"] },
+        "cape": { "type": ["string", "null"], "description": "Cape image URL." },
+        "showCape": { "type": "boolean" }
+      }
+    },
+    "camera": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "preset": { "type": "string", "enum": ["full", "head", "wide"] },
+        "position": { "$ref": "#/$defs/triple" },
+        "target": { "$ref": "#/$defs/triple" }
+      }
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pack": {
+          "type": "string",
+          "enum": [
+            "hero-studio",
+            "promo-poster",
+            "x-header",
+            "nether-cinema",
+            "ice-sheen",
+            "sticker-sheet",
+            "vertical-hero",
+            "hologram-lab"
+          ]
+        },
+        "background": { "type": "string", "enum": ["studio", "noon", "sunset", "night", "nether", "none"] },
+        "grade": { "type": "string", "enum": ["clean", "hologram", "ice", "comic"] },
+        "outline": { "type": "string", "enum": ["none", "ink", "sticker"] },
+        "godrays": { "type": "boolean" },
+        "light": { "type": "string", "enum": ["soft", "hard", "neon", "moon"] },
+        "keyIntensity": { "type": "number", "minimum": 0.45, "maximum": 1.6 },
+        "backgroundImage": {
+          "type": ["string", "null"],
+          "description": "data:image URL only. Large background images are not portable between machines."
+        },
+        "backgroundFit": { "type": "string", "enum": ["cover", "contain"] }
+      }
+    },
+    "prop": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,24}$" },
+        "item": {
+          "type": "string",
+          "description": "Catalog id (block:stone, item:diamond_sword, entity:creeper) or a legacy alias (stone, sword, creeper)."
+        },
+        "catalogId": { "type": "string" },
+        "position": { "$ref": "#/$defs/vec3" },
+        "rotation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "x": { "type": "number", "minimum": -720, "maximum": 720 },
+            "y": { "type": "number", "minimum": -720, "maximum": 720 },
+            "z": { "type": "number", "minimum": -720, "maximum": 720 }
+          }
+        },
+        "scale": {
+          "oneOf": [
+            { "type": "number", "minimum": 0.05, "maximum": 8 },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "x": { "type": "number", "minimum": 0.05, "maximum": 8 },
+                "y": { "type": "number", "minimum": 0.05, "maximum": 8 },
+                "z": { "type": "number", "minimum": 0.05, "maximum": 8 }
+              }
+            }
+          ]
+        },
+        "hidden": { "type": "boolean" }
+      }
+    },
+    "text": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": { "type": "string", "maxLength": 64 },
+        "subtitle": { "type": "string", "maxLength": 96 },
+        "kicker": { "type": "string", "maxLength": 48 },
+        "template": {
+          "type": "string",
+          "enum": ["clean", "mod-promo", "x-header", "vertical-card", "wallpaper", "lower-third"]
+        },
+        "scale": { "type": "number", "minimum": 0.5, "maximum": 2 },
+        "panel": { "type": "boolean" }
+      }
+    },
+    "export": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "type": "string",
+          "enum": ["avatar", "square", "xhs", "youtube", "story", "desktop", "banner", "uhd", "pfp", "thumb", "phone"]
+        },
+        "motion": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "fps": { "type": "integer", "minimum": 6, "maximum": 30, "description": "GIF frame rate." },
+            "gifEdge": { "type": "integer", "enum": [480, 720, 1080] },
+            "mp4Edge": { "type": "integer", "enum": [720, 1080] },
+            "mp4Fps": { "type": "integer", "minimum": 12, "maximum": 60 },
+            "mp4Bitrate": { "type": "integer", "minimum": 1000000, "maximum": 24000000 },
+            "frames": { "type": "integer", "minimum": 0, "maximum": 240, "description": "0 derives the count from the motion." }
+          }
+        }
+      }
+    }
+  }
+}

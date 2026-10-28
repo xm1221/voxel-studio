@@ -15,7 +15,9 @@ import {
   type Object3D,
 } from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { captureClip, captureStill } from "./capture";
+import { captureClip, captureStill, renderStill } from "./capture";
+import { captureMp4, type Mp4Options } from "./mp4";
+import type { PosterText } from "./poster";
 import { drawBubble, drawTag } from "./labels";
 import { motionPhaseOffset, sampleMotion } from "./motion";
 import { applyJoints, buildRig, configureTexture, type Rig } from "./rig/build";
@@ -71,6 +73,8 @@ type ClipSampleState = {
   sway: number;
   roll: number;
   cape: number;
+  /** Degrees, same unit as the keyframe field. */
+  yaw: number;
   ready: boolean;
 };
 
@@ -89,6 +93,8 @@ export class StudioEngine {
   private draft: SceneDraft | null = null;
   private lastTick = 0;
   private held = false;
+  /** Skin and cape loads in flight. `whenReady` waits for this to reach zero. */
+  private pendingLoads = 0;
   private moveTarget: MoveTarget | null = null;
   private transformHandler: ((target: MoveTarget & { x: number; z: number }) => void) | null = null;
   private readonly propRoot = new Group();
@@ -462,14 +468,14 @@ export class StudioEngine {
       if (player.skinUrl && rig.skinUrl !== player.skinUrl) {
         const token = ++rig.token;
         rig.skinUrl = player.skinUrl;
-        void this.applySkin(rig, player.skinUrl, token);
+        this.track(this.applySkin(rig, player.skinUrl, token));
       }
       rig.cape.visible = Boolean(player.capeUrl && player.showCape);
       if (player.capeUrl !== rig.capeUrl) {
         rig.capeUrl = player.capeUrl;
         if (player.capeUrl) {
           const token = ++rig.capeToken;
-          void this.applyCape(rig, player.capeUrl, token);
+          this.track(this.applyCape(rig, player.capeUrl, token));
         }
       }
     });
@@ -575,7 +581,15 @@ export class StudioEngine {
       const sampled = sampleMotion(player, time + (scrubbing ? 0 : motionPhaseOffset(index, player)), player.joints);
       let shown = this.shown.get(player.id);
       if (!shown || exactTime !== undefined || clipChanged || scrubbing) {
-        shown = { joints: { ...sampled.joints }, bob: sampled.bob, sway: sampled.sway, roll: sampled.roll, cape: sampled.cape, ready: true };
+        shown = {
+          joints: { ...sampled.joints },
+          bob: sampled.bob,
+          sway: sampled.sway,
+          roll: sampled.roll,
+          cape: sampled.cape,
+          yaw: sampled.yaw,
+          ready: true,
+        };
         if (exactTime === undefined) this.shown.set(player.id, shown);
       } else {
         const follow = 1 - Math.exp(-(player.clip === "none" ? 12 : 18) * Math.max(dt, 0));
@@ -589,6 +603,9 @@ export class StudioEngine {
           shown.sway = mix(shown.sway, sampled.sway);
           shown.roll = mix(shown.roll, sampled.roll);
           shown.cape = mix(shown.cape, sampled.cape);
+          // Yaw wraps at 360; follow the short way round so a loop does not unwind.
+          const turn = ((sampled.yaw - shown.yaw + 540) % 360) - 180;
+          shown.yaw += turn * follow;
         }
       }
       const x = (index - (draft.players.length - 1) / 2) * 22;
@@ -617,6 +634,13 @@ export class StudioEngine {
         rig.bubbleTex.needsUpdate = true;
       }
     }
+  }
+
+  private track<T>(promise: Promise<T>) {
+    this.pendingLoads += 1;
+    return promise.finally(() => {
+      this.pendingLoads = Math.max(0, this.pendingLoads - 1);
+    });
   }
 
   private async applySkin(rig: Rig, url: string, token: number) {
@@ -814,12 +838,60 @@ export class StudioEngine {
     this.controls.update();
   }
 
-  capture(options: { width: number; height: number; round: boolean; transparent: boolean }) {
+  capture(options: { width: number; height: number; round: boolean; transparent: boolean; poster?: PosterText | null }) {
     return captureStill(this.host(), options);
   }
 
-  captureClip(options: { width: number; height: number; round: boolean; transparent: boolean; frames: number; seconds: number }) {
+  /** Render exactly one frame at `time` seconds and return it as a PNG blob. */
+  captureFrame(options: {
+    width: number;
+    height: number;
+    round?: boolean;
+    transparent?: boolean;
+    poster?: PosterText | null;
+    time?: number;
+  }) {
+    return renderStill(this.host(), { round: false, transparent: false, ...options });
+  }
+
+  captureClip(options: {
+    width: number;
+    height: number;
+    round: boolean;
+    transparent: boolean;
+    frames: number;
+    seconds: number;
+    poster?: PosterText | null;
+  }) {
     return captureClip(this.host(), options);
+  }
+
+  /** MP4 through WebCodecs. Rejects with `err.mp4Unsupported` when the browser cannot encode. */
+  captureMp4(options: Mp4Options) {
+    return captureMp4(this.host(), options);
+  }
+
+  /** Resolve once every skin and cape texture currently in the scene has landed. */
+  async whenReady(timeoutMs = 10_000) {
+    const start = performance.now();
+    const settle = async () => {
+      // Two paints after the textures bind so the first exported frame is never blank.
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    };
+    await Promise.race([
+      (async () => {
+        for (;;) {
+          this.poseAll(0);
+          if (this.pendingLoads === 0) break;
+          if (performance.now() - start > timeoutMs) break;
+          await new Promise<void>((resolve) => setTimeout(resolve, 30));
+        }
+        await settle();
+      })(),
+      new Promise<void>((resolve) => setTimeout(resolve, timeoutMs + 100)),
+    ]);
+    return this.pendingLoads === 0;
   }
 
   private host() {

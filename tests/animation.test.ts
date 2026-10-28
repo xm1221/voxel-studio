@@ -123,7 +123,7 @@ describe("animation JSON", () => {
     assert.equal(wide.ok, false);
     const extraFrame = parseAnimationDocument({
       ...base,
-      keyframes: [{ time: 0, joints: {}, ease: "linear" }],
+      keyframes: [{ time: 0, joints: {}, ease: "wobble" }],
     });
     assert.equal(extraFrame.ok, false);
 
@@ -139,6 +139,72 @@ describe("animation JSON", () => {
 
     const many = Array.from({ length: 241 }, (_, index) => ({ time: index / 100, joints: {} }));
     assert.equal(parseAnimationDocument({ ...base, duration: 3, keyframes: many }).ok, false);
+  });
+
+  it("applies linear, smoothstep, and ease-in-out per segment", () => {
+    const build = (ease?: string) =>
+      mustParse({
+        v: 1,
+        name: "Ease",
+        duration: 1,
+        loop: false,
+        keyframes: [
+          { time: 0, joints: { headX: 0 }, ...(ease ? { ease } : {}) },
+          { time: 1, joints: { headX: 40 } },
+        ],
+      });
+    // Quarter of the way through: linear 10, smoothstep 40*(0.25²*(3-0.5)) = 6.25,
+    // ease-in-out 40*2*0.25² = 5.
+    assert.equal(sampleAnimation(build(), 0.25, rest).joints.headX, 6.25);
+    assert.equal(sampleAnimation(build("smoothstep"), 0.25, rest).joints.headX, 6.25);
+    assert.equal(sampleAnimation(build("linear"), 0.25, rest).joints.headX, 10);
+    assert.equal(sampleAnimation(build("ease-in-out"), 0.25, rest).joints.headX, 5);
+    // All three agree at the midpoint and at the end.
+    for (const ease of [undefined, "smoothstep", "linear", "ease-in-out"]) {
+      assert.equal(sampleAnimation(build(ease), 0.5, rest).joints.headX, 20);
+      assert.equal(sampleAnimation(build(ease), 1, rest).joints.headX, 40);
+    }
+    // Easing belongs to the segment that starts on that keyframe.
+    const second = mustParse({
+      v: 1,
+      name: "Two",
+      duration: 2,
+      loop: false,
+      keyframes: [
+        { time: 0, joints: { headX: 0 }, ease: "linear" },
+        { time: 1, joints: { headX: 40 }, ease: "ease-in-out" },
+        { time: 2, joints: { headX: 0 } },
+      ],
+    });
+    assert.equal(sampleAnimation(second, 0.5, rest).joints.headX, 20);
+    assert.equal(sampleAnimation(second, 1.25, rest).joints.headX, 35);
+  });
+
+  it("interpolates body turn in degrees and keeps the built-in spin inside one turn", () => {
+    const turn = mustParse({
+      v: 1,
+      name: "Turn",
+      duration: 1,
+      loop: false,
+      keyframes: [
+        { time: 0, joints: {}, ease: "linear" },
+        { time: 1, joints: {}, yaw: 360 },
+      ],
+    });
+    assert.equal(sampleAnimation(turn, 0.25, rest).yaw, 90);
+    assert.equal(sampleAnimation(turn, 0.5, rest).yaw, 180);
+    assert.equal(sampleAnimation(turn, 1, rest).yaw, 360);
+
+    const duration = clipCycle("spin");
+    let peak = 0;
+    for (let step = 0; step <= 32; step += 1) {
+      const yaw = sampleClip("spin", (step / 32) * duration, rest).yaw;
+      peak = Math.max(peak, yaw);
+      assert.ok(Number.isFinite(yaw));
+    }
+    // Degrees, not radians: a full turn, and never more.
+    assert.ok(peak > 300 && peak <= 360, `spin peak was ${peak}`);
+    assert.equal(sampleClip("spin", 0, rest).yaw, 0);
   });
 
   it("sizes a GIF from the custom animation duration", () => {

@@ -7,8 +7,8 @@ import { catalogLabel, loadCatalog, subscribeCatalog } from "@/lib/catalog";
 import { createAlexSkin, createSteveSkin } from "@/lib/defaults";
 import { StudioEngine } from "@/lib/engine";
 import { LOCALE_STORAGE_KEY, code, errorNote, htmlLang, note, parseNote, readLocale, t, type Locale, type MessageKey, type Note } from "@/lib/i18n";
-import { FORMATS, formatById, gifFrameSize } from "@/lib/formats";
-import { animationDocument, animationDownloadName, animationForClip, CLIPS, clipExportSpanForPlayers, MAX_ANIMATION_TEXT_LENGTH, parseAnimationText } from "@/lib/motion";
+import { FORMATS, formatById } from "@/lib/formats";
+import { animationDocument, animationDownloadName, animationForClip, CLIPS, MAX_ANIMATION_TEXT_LENGTH, parseAnimationText } from "@/lib/motion";
 import { backgroundImageFrom, decodePayload, encodePayload, toPayload } from "@/lib/persist";
 import { POSES } from "@/lib/poses";
 import { PRESET_STORAGE_KEY, mergePresets, newPresetId, parsePresetDocument, presetDocument, type UserPreset } from "@/lib/presets";
@@ -25,11 +25,26 @@ import { MAX_PROPS, duplicateProp, placeProp } from "@/lib/props";
 import { gizmoTransform, movePivot, type Space } from "@/lib/transform-math";
 import { readResourcePack, texturesFromFolder, type PackTexture } from "@/lib/resource-pack";
 import { STORAGE_KEY, defaultScene, makePlayer, requestPlayer, resetPlayer, resetSceneLook, sceneFromPayload } from "@/lib/studio-state";
+import { DEFAULT_MOTION_EXPORT, type MotionExportOptions } from "@/lib/motion-export";
+import { EMPTY_POSTER_TEXT, POSTER_TEMPLATES, posterHasText, type PosterText } from "@/lib/poster";
+import { SCENE_PACKS, applyScenePack, type ScenePack } from "@/lib/scene-packs";
+import { toSceneDocument } from "@/lib/scene-doc";
+import { planMotion } from "@/lib/exporters";
+import { installPixelstage, registerPixelstage, unregisterPixelstage, type PixelstageHandlers } from "@/lib/render-api";
+import { stageHandlers } from "@/lib/stage-hooks";
 import type { CameraSnapshot, Joints, PlayerDraft, SceneDraft, SceneProp } from "@/lib/types";
 
 let builtinSkins: { steve: string; alex: string } | null = null;
 let bootCamera: CameraSnapshot | undefined;
 let bootRefetch: string[] = [];
+let bootSceneHandled = false;
+
+function decodeBase64Json(value: string) {
+  const padded = value.replaceAll("-", "+").replaceAll("_", "/") + "=".repeat((4 - (value.length % 4)) % 4);
+  const binary = atob(padded);
+  const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
 
 function pngBlob(bytes: Uint8Array) {
   const copy = new Uint8Array(bytes.byteLength);
@@ -124,6 +139,13 @@ export function Studio() {
   const [gizmoSnap, setGizmoSnap] = useState(true);
   const [selection, setSelection] = useState<string[]>([]);
   const [catalogTick, setCatalogTick] = useState(0);
+  const [poster, setPoster] = useState<PosterText>(EMPTY_POSTER_TEXT);
+  const [motionExport, setMotionExport] = useState<MotionExportOptions>(DEFAULT_MOTION_EXPORT);
+  const [mp4Progress, setMp4Progress] = useState<number | null>(null);
+  const [activePack, setActivePack] = useState<string | null>(null);
+  const [sceneJsonOpen, setSceneJsonOpen] = useState(false);
+  const posterRef = useRef(poster);
+  const motionRef = useRef(motionExport);
   const [customs, setCustoms] = useState<CustomAsset[]>([]);
   const [historyCounts, setHistoryCounts] = useState({ undo: 0, redo: 0 });
   const historyRef = useRef<Array<{ props: SceneDraft["props"]; propClip: SceneDraft["propClip"] }>>([]);
@@ -187,6 +209,14 @@ export function Studio() {
   useEffect(() => {
     sceneRef.current = scene;
   }, [scene]);
+
+  useEffect(() => {
+    posterRef.current = poster;
+  }, [poster]);
+
+  useEffect(() => {
+    motionRef.current = motionExport;
+  }, [motionExport]);
 
   const [texturePack, setTexturePack] = useState<{ name: string; count: number } | null>(null);
 
@@ -256,6 +286,87 @@ export function Studio() {
       engine.dispose();
       engineRef.current = null;
     };
+  }, []);
+
+  // `window.pixelstage`: a stable handle for agents and the headless renderer.
+  useEffect(() => {
+    installPixelstage();
+    const engine = engineRef.current;
+    if (!engine) return;
+    const handlers: PixelstageHandlers = stageHandlers({
+      engine,
+      getScene: () => sceneRef.current,
+      getCamera: () => engine.getCamera(),
+      setCamera: (camera) => engine.setCamera(camera),
+      getPoster: () => posterRef.current,
+      setPoster: (next) => setPoster(next),
+      getMotion: () => motionRef.current,
+      setMotion: (next) => setMotionExport(next),
+      applyScene: (next, camera) => {
+        setScene(next);
+        sceneRef.current = next;
+        engine.sync(next);
+        if (camera) engine.setCamera(camera);
+      },
+      resolveUsernames: async (draft) => {
+        const jobs = draft.players.filter((player) => player.source === "username" && player.username);
+        const loaded = await Promise.all(
+          jobs.map((player) =>
+            requestPlayer(player.username as string)
+              .then((data) => ({ id: player.id, data }))
+              .catch(() => null),
+          ),
+        );
+        const found = loaded.filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+        if (!found.length) return;
+        setScene((current) => {
+          if (!current) return current;
+          const players = current.players.map((player) => {
+            const entry = found.find((item) => item.id === player.id);
+            if (!entry) return player;
+            return {
+              ...player,
+              name: entry.data.name,
+              username: entry.data.name,
+              source: "username" as const,
+              model: entry.data.model,
+              skinUrl: entry.data.skin,
+              capeUrl: entry.data.cape,
+              showCape: true,
+            };
+          });
+          const next = { ...current, players };
+          sceneRef.current = next;
+          return next;
+        });
+      },
+    });
+    registerPixelstage(handlers);
+    return () => unregisterPixelstage();
+  }, []);
+
+  // A scene can be loaded from `?scene=<url>` (or `?scene64=`), which is what
+  // the CLI and shareable agent links use.
+  useEffect(() => {
+    if (bootSceneHandled) return;
+    const params = new URLSearchParams(window.location.search);
+    const remote = params.get("scene");
+    const inline = params.get("scene64");
+    if (!remote && !inline) return;
+    bootSceneHandled = true;
+    const load = async () => {
+      const api = window.pixelstage;
+      if (!api) return;
+      try {
+        await api.ready;
+        const result = remote ? await api.loadSceneFromUrl(remote) : await api.loadScene(JSON.parse(decodeBase64Json(inline as string)) as unknown);
+        if (result.ok) setMessage(note("sceneLoaded"));
+        else setError(parseNote(result.errors?.[0]?.code ?? "") ?? note("err.sceneLoad"));
+      } catch (reason) {
+        setError(errorNote(reason, "err.sceneLoad"));
+      }
+    };
+    void load();
   }, []);
 
   useEffect(() => {
@@ -902,6 +1013,7 @@ export function Studio() {
         height: format.height,
         round: transparent ? false : format.round,
         transparent,
+        poster: transparent ? null : poster,
       });
       const link = document.createElement("a");
       const url = URL.createObjectURL(blob);
@@ -920,17 +1032,18 @@ export function Studio() {
   async function downloadGif() {
     if (!scene || !engineRef.current) return;
     const format = formatById(scene.formatId);
-    const size = gifFrameSize(format);
-    const span = clipExportSpanForPlayers(scene.players);
+    const transparent = scene.background === "none" && !scene.backgroundImage;
+    const plan = planMotion(scene, format, motionExport, "gif");
     setBusy(true);
     try {
       const blob = await engineRef.current.captureClip({
-        width: size.width,
-        height: size.height,
-        round: format.round,
-        transparent: scene.background === "none" && !scene.backgroundImage,
-        frames: span.frames,
-        seconds: span.seconds,
+        width: plan.width,
+        height: plan.height,
+        round: format.round && !transparent,
+        transparent,
+        frames: plan.frames,
+        seconds: plan.seconds,
+        poster,
       });
       const link = document.createElement("a");
       const url = URL.createObjectURL(blob);
@@ -939,12 +1052,66 @@ export function Studio() {
       link.download = `pixelstage-${who}-${scene.players.length > 1 ? "players" : active?.clip ?? "clip"}.gif`;
       link.click();
       URL.revokeObjectURL(url);
-      setMessage(note("gifExported", { width: size.width, height: size.height }));
+      setMessage(note("gifExported", { width: plan.width, height: plan.height }));
     } catch (reason) {
       setError(errorNote(reason, "err.gif"));
     } finally {
       setBusy(false);
     }
+  }
+
+  async function downloadMp4() {
+    if (!scene || !engineRef.current) return;
+    const format = formatById(scene.formatId);
+    const transparent = scene.background === "none" && !scene.backgroundImage;
+    const plan = planMotion(scene, format, motionExport, "mp4");
+    setBusy(true);
+    setMp4Progress(0);
+    try {
+      const blob = await engineRef.current.captureMp4({
+        width: plan.width,
+        height: plan.height,
+        fps: plan.fps,
+        frames: plan.frames,
+        seconds: plan.seconds,
+        bitrate: motionExport.mp4Bitrate,
+        poster,
+        transparent,
+        onProgress: setMp4Progress,
+      });
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      link.href = url;
+      const who = (active?.name || "skin").toLowerCase().replace(/[^a-z0-9_-]+/gi, "-");
+      link.download = `pixelstage-${who}-${scene.players.length > 1 ? "players" : active?.clip ?? "clip"}.mp4`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setMessage(note("mp4Exported", { width: plan.width, height: plan.height, fps: plan.fps }));
+    } catch (reason) {
+      setError(errorNote(reason, "err.export"));
+    } finally {
+      setBusy(false);
+      setMp4Progress(null);
+    }
+  }
+
+  async function copySceneJson() {
+    if (!scene || !engineRef.current) return;
+    const doc = toSceneDocument(scene, { camera: engineRef.current.getCamera(), poster, motion: motionExport });
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(doc, null, 2));
+      setMessage(note("sceneCopied"));
+    } catch {
+      setError(note("err.export"));
+    }
+  }
+
+  function applyPack(pack: ScenePack) {
+    if (!scene) return;
+    patch((current) => applyScenePack(current, pack));
+    engineRef.current?.setCamera(pack.camera);
+    setActivePack(pack.id);
+    setMessage(note("scenePackApplied", { name: ui(locale, `pack.${pack.id}`) }));
   }
 
   async function share() {
@@ -1133,6 +1300,21 @@ export function Studio() {
                   </button>
                 </div>
                 <p className="hint scene-hint">{scene.backgroundImage ? tr("sceneHintOn") : tr("sceneHintOff")}</p>
+                <h2>{tr("scenePacks")}</h2>
+                <p className="hint">{tr("scenePacksHint")}</p>
+                <div className="poses scene-packs">
+                  {SCENE_PACKS.map((pack) => (
+                    <button
+                      key={pack.id}
+                      type="button"
+                      className={activePack === pack.id ? "pose active" : "pose"}
+                      title={ui(locale, `packHint.${pack.id}`)}
+                      onClick={() => applyPack(pack)}
+                    >
+                      {ui(locale, `pack.${pack.id}`)}
+                    </button>
+                  ))}
+                </div>
                 <div className="row scene-chips">
                   {BACKGROUNDS.map((id) => (
                     <button key={id} type="button" className={scene.background === id ? "chip active" : "chip"} onClick={() => patch((current) => ({ ...current, background: id }))}>
@@ -1663,6 +1845,72 @@ export function Studio() {
               </section>
 
               <section className="block" hidden={panel !== "scene"}>
+                <div className="section-head">
+                  <h2>{tr("poster")}</h2>
+                  <button className="btn ghost" type="button" disabled={!posterHasText(poster)} onClick={() => setPoster(EMPTY_POSTER_TEXT)}>
+                    {tr("posterClear")}
+                  </button>
+                </div>
+                <p className="hint">{tr("posterHint")}</p>
+                <label className="field">
+                  <span>{tr("posterTitle")}</span>
+                  <input
+                    value={poster.title}
+                    maxLength={64}
+                    placeholder={tr("posterTitlePh")}
+                    aria-label={tr("posterTitle")}
+                    onChange={(event) => setPoster((current) => ({ ...current, title: event.target.value }))}
+                  />
+                </label>
+                <label className="field">
+                  <span>{tr("posterSubtitle")}</span>
+                  <input
+                    value={poster.subtitle}
+                    maxLength={96}
+                    placeholder={tr("posterSubtitlePh")}
+                    aria-label={tr("posterSubtitle")}
+                    onChange={(event) => setPoster((current) => ({ ...current, subtitle: event.target.value }))}
+                  />
+                </label>
+                <label className="field">
+                  <span>{tr("posterKicker")}</span>
+                  <input
+                    value={poster.kicker}
+                    maxLength={48}
+                    placeholder={tr("posterKickerPh")}
+                    aria-label={tr("posterKicker")}
+                    onChange={(event) => setPoster((current) => ({ ...current, kicker: event.target.value }))}
+                  />
+                </label>
+                <div className="poses">
+                  {POSTER_TEMPLATES.map((template) => (
+                    <button
+                      key={template.id}
+                      type="button"
+                      className={poster.template === template.id ? "pose active" : "pose"}
+                      title={ui(locale, `tplHint.${template.id}`)}
+                      onClick={() => setPoster((current) => ({ ...current, template: template.id }))}
+                    >
+                      {tr(`poster.tpl.${template.id}` as MessageKey)}
+                    </button>
+                  ))}
+                </div>
+                <label className="slider">
+                  <span>{tr("posterScale")}</span>
+                  <input
+                    type="range"
+                    min={0.5}
+                    max={2}
+                    step={0.05}
+                    value={poster.scale}
+                    aria-label={tr("posterScale")}
+                    onChange={(event) => setPoster((current) => ({ ...current, scale: Number(event.target.value) }))}
+                  />
+                  <strong>{poster.scale.toFixed(2)}×</strong>
+                </label>
+              </section>
+
+              <section className="block" hidden={panel !== "scene"}>
                 <h2>{tr("exportSize")}</h2>
                 <div className="formats">
                   {FORMATS.map((format) => (
@@ -1672,6 +1920,75 @@ export function Studio() {
                     </button>
                   ))}
                 </div>
+              </section>
+
+              <section className="block" hidden={panel !== "scene"}>
+                <h2>{tr("motionExport")}</h2>
+                <div className="row">
+                  <span className="hint">{tr("gifFps")}</span>
+                  {[8, 12, 18, 24].map((fps) => (
+                    <button key={fps} type="button" className={motionExport.fps === fps ? "chip active" : "chip"} onClick={() => setMotionExport((current) => ({ ...current, fps }))}>
+                      {fps}
+                    </button>
+                  ))}
+                </div>
+                <div className="row" style={{ marginTop: 8 }}>
+                  <span className="hint">{tr("gifEdge")}</span>
+                  {[480, 720, 1080].map((edge) => (
+                    <button key={edge} type="button" className={motionExport.gifEdge === edge ? "chip active" : "chip"} onClick={() => setMotionExport((current) => ({ ...current, gifEdge: edge as MotionExportOptions["gifEdge"] }))}>
+                      {edge}
+                    </button>
+                  ))}
+                </div>
+                <div className="row" style={{ marginTop: 8 }}>
+                  <span className="hint">{tr("mp4Fps")}</span>
+                  {[24, 30, 60].map((fps) => (
+                    <button key={fps} type="button" className={motionExport.mp4Fps === fps ? "chip active" : "chip"} onClick={() => setMotionExport((current) => ({ ...current, mp4Fps: fps }))}>
+                      {fps}
+                    </button>
+                  ))}
+                </div>
+                <div className="row" style={{ marginTop: 8 }}>
+                  <span className="hint">{tr("mp4Edge")}</span>
+                  {[720, 1080].map((edge) => (
+                    <button key={edge} type="button" className={motionExport.mp4Edge === edge ? "chip active" : "chip"} onClick={() => setMotionExport((current) => ({ ...current, mp4Edge: edge as MotionExportOptions["mp4Edge"] }))}>
+                      {edge}
+                    </button>
+                  ))}
+                </div>
+                <label className="slider" style={{ marginTop: 10 }}>
+                  <span>{tr("framesLabel")}</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={120}
+                    step={1}
+                    value={motionExport.frames}
+                    aria-label={tr("framesLabel")}
+                    onChange={(event) => setMotionExport((current) => ({ ...current, frames: Number(event.target.value) }))}
+                  />
+                  <strong>{motionExport.frames === 0 ? "auto" : motionExport.frames}</strong>
+                </label>
+                <div className="row" style={{ marginTop: 8 }}>
+                  <button className="btn ghost" type="button" disabled={busy || !scene} onClick={() => void downloadGif()}>
+                    {tr("exportGif")}
+                  </button>
+                  <button className="btn ghost" type="button" disabled={busy || !scene} onClick={() => void downloadMp4()}>
+                    {mp4Progress === null ? tr("exportMp4") : `${tr("working")} ${mp4Progress}%`}
+                  </button>
+                </div>
+              </section>
+
+              <section className="block" hidden={panel !== "scene"}>
+                <details className="advanced" open={sceneJsonOpen} onToggle={(event) => setSceneJsonOpen((event.target as HTMLDetailsElement).open)}>
+                  <summary>{tr("sceneJson")}</summary>
+                  <p className="hint">{tr("sceneJsonHint")}</p>
+                  <div className="row">
+                    <button className="btn ghost" type="button" onClick={() => void copySceneJson()}>
+                      {tr("copySceneJson")}
+                    </button>
+                  </div>
+                </details>
               </section>
             </>
           ) : (

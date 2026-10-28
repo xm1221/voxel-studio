@@ -1,7 +1,7 @@
 import { code } from "./i18n.ts";
-import { parseAnimationDocument } from "./motion.ts";
+import { isEaseId, parseAnimationDocument } from "./motion.ts";
 import { JOINT_LIMITS } from "./presets.ts";
-import type { AnimationDef, AnimationKeyframe, Joints } from "./types";
+import type { AnimationDef, AnimationKeyframe, EaseId, Joints } from "./types";
 
 const JOINT_KEYS = Object.keys(JOINT_LIMITS) as (keyof Joints)[];
 const MIN_GAP = 0.02;
@@ -14,12 +14,14 @@ const SCALAR_LIMITS = {
   sway: { min: -5, max: 5 },
   roll: { min: -5, max: 5 },
   cape: { min: -45, max: 45 },
+  /** Body turn in degrees. Absent means 0, so v1 files keep their output. */
+  yaw: { min: -720, max: 720 },
 } as const;
 
 export type ScalarKey = keyof typeof SCALAR_LIMITS;
 export type CurveChannel = keyof Joints | ScalarKey;
 
-export const CURVE_CHANNELS: CurveChannel[] = [...JOINT_KEYS, "bob", "sway", "roll", "cape"];
+export const CURVE_CHANNELS: CurveChannel[] = [...JOINT_KEYS, "bob", "sway", "roll", "cape", "yaw"];
 
 export type EditResult = { ok: true; animation: AnimationDef; index: number } | { ok: false; error: string };
 
@@ -45,6 +47,8 @@ function clone(animation: AnimationDef): AnimationDef {
       sway: frame.sway,
       roll: frame.roll,
       cape: frame.cape,
+      ...(frame.ease ? { ease: frame.ease } : {}),
+      ...(frame.yaw ? { yaw: frame.yaw } : {}),
     })),
   };
 }
@@ -200,6 +204,27 @@ export function writeScalar(animation: AnimationDef, index: number, key: ScalarK
   return finish(next, index);
 }
 
+/** Interpolation leaving this keyframe. `null` restores the v1 smoothstep. */
+export function writeEase(animation: AnimationDef, index: number, ease: EaseId | null): EditResult {
+  if (index < 0 || index >= animation.keyframes.length) return { ok: false, error: code("err.animFrames") };
+  const next = clone(animation);
+  // smoothstep is the v1 default, so writing it removes the field instead of
+  // adding one. Files that predate easing stay byte-identical.
+  if (ease && ease !== "smoothstep" && isEaseId(ease)) next.keyframes[index].ease = ease;
+  else delete next.keyframes[index].ease;
+  return finish(next, index);
+}
+
+/** Body turn in degrees for one keyframe. Zero removes the field, keeping old JSON identical. */
+export function writeYaw(animation: AnimationDef, index: number, yaw: number): EditResult {
+  if (index < 0 || index >= animation.keyframes.length) return { ok: false, error: code("err.animFrames") };
+  const next = clone(animation);
+  const value = clamp(yaw, SCALAR_LIMITS.yaw.min, SCALAR_LIMITS.yaw.max);
+  if (value === 0) delete next.keyframes[index].yaw;
+  else next.keyframes[index].yaw = value;
+  return finish(next, index);
+}
+
 export function writePose(animation: AnimationDef, index: number, rest: Joints): EditResult {
   if (index < 0 || index >= animation.keyframes.length) return { ok: false, error: code("err.animFrames") };
   const next = clone(animation);
@@ -214,12 +239,16 @@ export function followPose(animation: AnimationDef, index: number): EditResult {
   return finish(next, index);
 }
 
+function isScalarKey(channel: CurveChannel): channel is ScalarKey {
+  return Object.prototype.hasOwnProperty.call(SCALAR_LIMITS, channel);
+}
+
 export function channelValue(frame: AnimationKeyframe, channel: CurveChannel, rest: Joints) {
-  if (channel === "bob" || channel === "sway" || channel === "roll" || channel === "cape") return frame[channel];
+  if (isScalarKey(channel)) return frame[channel] ?? 0;
   return frame.joints[channel] ?? rest[channel];
 }
 
 export function channelLimits(channel: CurveChannel) {
-  if (channel === "bob" || channel === "sway" || channel === "roll" || channel === "cape") return SCALAR_LIMITS[channel];
+  if (isScalarKey(channel)) return SCALAR_LIMITS[channel];
   return JOINT_LIMITS[channel];
 }

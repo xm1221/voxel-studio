@@ -1,0 +1,38 @@
+{
+  "v": 2,
+  "meta": { "name": "Duo promo", "note": "Two avatars, a prop shelf, and a mod-promo poster layout." },
+  "cast": [
+    {
+      "id": "left",
+      "name": "Steve",
+      "skin": "steve",
+      "pose": "wave",
+      "motion": { "preset": "wave", "speed": 1.2 },
+      "position": { "x": -11, "y": 0, "z": 0 }
+    },
+    {
+      "id": "right",
+      "name": "Alex",
+      "skin": "alex",
+      "model": "slim",
+      "pose": "salute",
+      "motion": { "preset": "cheer", "speed": 0.9 },
+      "position": { "x": 11, "y": 0, "z": 0 }
+    }
+  ],
+  "camera": { "position": [14, 9, 62], "target": [0, 4, 0] },
+  "stage": { "pack": "promo-poster", "background": "sunset", "outline": "sticker" },
+  "props": [
+    { "item": "tnt", "position": { "x": 24, "y": 0, "z": -6 } },
+    { "item": "sword", "position": { "x": -24, "y": 2, "z": -4 }, "rotation": { "y": -30 } },
+    { "item": "creeper", "position": { "x": 0, "y": 0, "z": -22 }, "scale": 0.8 }
+  ],
+  "text": {
+    "title": "Two skins, one shot",
+    "subtitle": "Pose both, export once",
+    "kicker": "MOD PROMO",
+    "template": "mod-promo",
+    "scale": 0.9
+  },
+  "export": { "format": "story", "motion": { "fps": 12, "gifEdge": 720, "mp4Edge": 1080, "mp4Fps": 30 } }
+}

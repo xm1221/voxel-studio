@@ -1,0 +1,45 @@
+{
+  "v": 2,
+  "meta": {
+    "name": "4K poster",
+    "note": "UHD poster with the clean title layout. Good for a wallpaper drop."
+  },
+  "cast": [
+    {
+      "id": "hero",
+      "name": "Steve",
+      "skin": "steve",
+      "pose": "hero",
+      "motion": {
+        "preset": "idle",
+        "speed": 1
+      },
+      "scale": 1.05
+    }
+  ],
+  "camera": {
+    "preset": "full"
+  },
+  "stage": {
+    "pack": "ice-sheen",
+    "background": "noon",
+    "light": "hard",
+    "keyIntensity": 1.2
+  },
+  "text": {
+    "title": "A skin, in daylight",
+    "subtitle": "Rendered at 3840 × 2160",
+    "kicker": "PIXELSTAGE · STEP 1",
+    "template": "clean",
+    "scale": 1.1
+  },
+  "export": {
+    "format": "uhd",
+    "motion": {
+      "fps": 12,
+      "gifEdge": 480,
+      "mp4Edge": 1080,
+      "mp4Fps": 24
+    }
+  }
+}

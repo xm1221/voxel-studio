@@ -1,0 +1,28 @@
+{
+  "v": 2,
+  "meta": { "name": "X header", "note": "Wide banner with the subject pushed right and the title on the left." },
+  "cast": [
+    {
+      "id": "alex",
+      "name": "Alex",
+      "skin": "alex",
+      "model": "slim",
+      "pose": "flex",
+      "motion": { "preset": "idle", "speed": 1 },
+      "scale": 1.05
+    }
+  ],
+  "camera": { "preset": "wide" },
+  "stage": { "pack": "x-header", "godrays": true },
+  "props": [
+    { "item": "stone", "position": { "x": -10, "y": 0, "z": -2 }, "rotation": { "y": 20 } },
+    { "item": "grass", "position": { "x": 12, "y": 0, "z": -4 }, "scale": 1.2 }
+  ],
+  "text": {
+    "title": "Pixelstage",
+    "subtitle": "Minecraft skin rendering in the browser",
+    "kicker": "v2 scene JSON",
+    "template": "x-header"
+  },
+  "export": { "format": "banner", "motion": { "fps": 12, "gifEdge": 720, "mp4Edge": 1080, "mp4Fps": 30 } }
+}

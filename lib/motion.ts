@@ -1,7 +1,7 @@
 import { code } from "./i18n.ts";
 import { poseById } from "./poses.ts";
 import { JOINT_LIMITS } from "./presets.ts";
-import type { AnimationDef, AnimationKeyframe, BuiltinClipId, Joints, PlayerDraft } from "./types";
+import type { AnimationDef, AnimationKeyframe, BuiltinClipId, EaseId, Joints, PlayerDraft } from "./types";
 
 /** 动作相位对齐 skinview3d 的行走 / 跑步，并在肘、膝上加随摆动弯曲。 */
 export type ClipSample = {
@@ -10,6 +10,8 @@ export type ClipSample = {
   sway: number;
   roll: number;
   cape: number;
+  /** Turn around the vertical axis, in degrees. Built-in spin uses it. */
+  yaw: number;
 };
 
 export const CLIPS: Array<{ id: BuiltinClipId; name: string; hint: string }> = [
@@ -19,6 +21,14 @@ export const CLIPS: Array<{ id: BuiltinClipId; name: string; hint: string }> = [
   { id: "run", name: "跑步", hint: "步幅更大，身体一起一伏。" },
   { id: "wave", name: "挥手", hint: "右臂抬起，小臂来回摆。" },
   { id: "cheer", name: "欢呼", hint: "双臂举起，肘和膝跟着节拍弯。" },
+  { id: "crouch", name: "潜行", hint: "蹲下、身体前倾，手臂微张，像在方块边上挪。" },
+  { id: "attack", name: "挥剑", hint: "右臂斜劈下来，身体跟着转，落点带一下顿。" },
+  { id: "fly", name: "飞行", hint: "身体前倾、双臂后展，披风被风掀起。" },
+  { id: "swim", name: "游泳", hint: "蛙泳：双臂轮流前伸，腿跟着收放。" },
+  { id: "nod", name: "点头", hint: "头轻轻上下，肩膀几乎不动。" },
+  { id: "spin", name: "转身", hint: "整个人绕竖轴转一圈，手臂微微甩开。" },
+  { id: "jump", name: "起跳", hint: "下蹲蓄力、蹬地、落地缓冲。" },
+  { id: "sit", name: "坐姿循环", hint: "坐在地上，呼吸起伏，小腿轻轻晃。" },
 ];
 
 const BUILTIN_IDS = new Set<BuiltinClipId>(CLIPS.map((clip) => clip.id));
@@ -34,10 +44,31 @@ const SCALAR_LIMITS = {
   sway: { min: -5, max: 5 },
   roll: { min: -5, max: 5 },
   cape: { min: -45, max: 45 },
+  /** Turn around the vertical axis, in degrees. Absent means 0, like v1. */
+  yaw: { min: -720, max: 720 },
 } as const;
 
+export const EASES = ["linear", "smoothstep", "ease-in-out"] as const;
+const EASE_IDS = new Set<string>(EASES);
+
+export function isEaseId(value: unknown): value is EaseId {
+  return typeof value === "string" && EASE_IDS.has(value);
+}
+
+/** Cubic ease-in-out (slow, fast, slow) symmetric around the midpoint. */
+function easeInOut(value: number) {
+  return value < 0.5 ? 2 * value * value : 1 - (-2 * value + 2) ** 2 / 2;
+}
+
+export function applyEase(ease: EaseId | undefined, value: number) {
+  const clamped = Math.max(0, Math.min(1, value));
+  if (ease === "linear") return clamped;
+  if (ease === "ease-in-out") return easeInOut(clamped);
+  return smoothstep(clamped);
+}
+
 const ANIMATION_KEYS = new Set(["v", "name", "duration", "loop", "keyframes"]);
-const KEYFRAME_KEYS = new Set(["time", "joints", ...Object.keys(SCALAR_LIMITS)]);
+const KEYFRAME_KEYS = new Set(["time", "joints", "ease", ...Object.keys(SCALAR_LIMITS)]);
 
 export function clipById(id: string | undefined): BuiltinClipId {
   return id && BUILTIN_IDS.has(id as BuiltinClipId) ? (id as BuiltinClipId) : "none";
@@ -50,21 +81,40 @@ export function clipCycle(clip: BuiltinClipId): number {
   if (clip === "wave") return 2;
   if (clip === "cheer") return 1.2;
   if (clip === "idle") return Math.PI;
+  if (clip === "crouch") return 2.6;
+  if (clip === "attack") return 0.9;
+  if (clip === "fly") return 2.8;
+  if (clip === "swim") return 1.7;
+  if (clip === "nod") return 1.4;
+  if (clip === "spin") return 2.2;
+  if (clip === "jump") return 1.25;
+  if (clip === "sit") return 2.4;
   return 2.4;
 }
 
 /** 导出用的循环。行走和跑步收两步，转一圈和呼吸收一整段。 */
-export function clipExportSpan(clip: BuiltinClipId): { frames: number; seconds: number } {
+export function clipExportSpan(
+  clip: BuiltinClipId,
+  fps = 12,
+  maxFrames = 28,
+  minFrames = 12,
+): { frames: number; seconds: number } {
   const cycle = clipCycle(clip);
   const seconds = clip === "walk" || clip === "run" ? cycle * 2 : cycle;
-  const frames = clip === "none" ? 24 : Math.min(28, Math.max(12, Math.round(seconds * 12)));
+  const frames = clip === "none" ? 24 : Math.min(maxFrames, Math.max(minFrames, Math.round(seconds * fps)));
   return { frames, seconds };
 }
 
-export function animationExportSpan(animation: AnimationDef, speed = 1): { frames: number; seconds: number } {
+export function animationExportSpan(
+  animation: AnimationDef,
+  speed = 1,
+  fps = 12,
+  maxFrames = 28,
+  minFrames = 12,
+): { frames: number; seconds: number } {
   const safeSpeed = Number.isFinite(speed) && speed > 0 ? speed : 1;
   const seconds = animation.duration / safeSpeed;
-  const frames = Math.min(28, Math.max(12, Math.round(seconds * 12)));
+  const frames = Math.min(maxFrames, Math.max(minFrames, Math.round(seconds * fps)));
   return { frames, seconds };
 }
 
@@ -72,19 +122,32 @@ type PlayerMotion = Pick<PlayerDraft, "clip" | "clipSpeed"> & {
   customAnimation?: AnimationDef | null;
 };
 
-export function clipExportSpanForPlayers(players: PlayerMotion[]): { frames: number; seconds: number } {
-  if (!players.length) return clipExportSpan("none");
+/**
+ * One span for the whole cast. `fps` and `frameCap` let the GIF/MP4 UI pick
+ * quality; the defaults are the old 12–28 frame, 12 fps GIF.
+ */
+export function clipExportSpanForPlayers(
+  players: PlayerMotion[],
+  options: { fps?: number; maxFrames?: number; minFrames?: number } = {},
+): { frames: number; seconds: number } {
+  const fps = Number.isFinite(options.fps) && (options.fps as number) > 0 ? (options.fps as number) : 12;
+  const maxFrames = Math.min(240, Math.max(2, Math.round(options.maxFrames ?? 28)));
+  const minFrames = Math.min(maxFrames, Math.max(2, Math.round(options.minFrames ?? 12)));
+  if (!players.length) return clipExportSpan("none", fps, maxFrames, minFrames);
   const seconds = Math.max(
     ...players.map((player) => {
       const speed = Number.isFinite(player.clipSpeed) && player.clipSpeed > 0 ? player.clipSpeed : 1;
       if (player.clip === "custom" && player.customAnimation) {
-        return animationExportSpan(player.customAnimation, speed).seconds;
+        return animationExportSpan(player.customAnimation, speed, fps, maxFrames, minFrames).seconds;
       }
-      return clipExportSpan(clipById(player.clip)).seconds / speed;
+      return clipExportSpan(clipById(player.clip), fps, maxFrames, minFrames).seconds / speed;
     }),
   );
-  const allStill = players.every((player) => player.clip === "none");
-  const frames = allStill ? 24 : Math.min(28, Math.max(12, Math.round(seconds * 12)));
+  // A fully still cast still exports the slow turntable, which the old GIF had.
+  if (players.every((player) => player.clip === "none")) {
+    return { frames: Math.min(maxFrames, Math.max(minFrames, 24)), seconds };
+  }
+  const frames = Math.min(maxFrames, Math.max(minFrames, Math.round(seconds * fps)));
   return { frames, seconds };
 }
 
@@ -99,6 +162,19 @@ export function motionPhaseOffset(index: number, player: PlayerMotion): number {
   return phaseOffset(index, clipById(player.clip));
 }
 
+const SIT_JOINTS: Joints = poseById("sit").joints;
+
+function mix(from: number, to: number, amount: number) {
+  return from + (to - from) * amount;
+}
+
+/** 0 → 1 → 0 over [a, b], smooth at both ends. Used to cut a cycle into phases. */
+function pulse(value: number, a: number, b: number) {
+  if (value <= a || value >= b) return 0;
+  const u = (value - a) / (b - a);
+  return Math.sin(u * Math.PI) ** 2;
+}
+
 function trailBend(backward: number, fullSwing: number, amount: number) {
   const t = Math.min(1, Math.max(0, backward) / fullSwing);
   const eased = t * t * (3 - 2 * t);
@@ -111,6 +187,7 @@ export function sampleClip(clip: BuiltinClipId, time: number, rest: Joints): Cli
   let sway = 0;
   let roll = 0;
   let cape = 0;
+  let yaw = 0;
 
   if (clip === "idle") {
     const w = time * 2;
@@ -180,9 +257,166 @@ export function sampleClip(clip: BuiltinClipId, time: number, rest: Joints): Cli
     joints.lKnee = rest.lKnee + Math.max(0, Math.sin(t + Math.PI)) * 10;
     bob = Math.abs(Math.sin(t)) * 1.05;
     cape = 4 + Math.sin(t * 2) * 3;
+  } else if (clip === "crouch") {
+    // Sneak-walk: body pitched forward, knees bent, arms a little wide.
+    const t = (time * Math.PI * 2) / clipCycle("crouch");
+    const s = Math.sin(t);
+    const c = Math.cos(t);
+    joints.bodyX = rest.bodyX + 14;
+    joints.headX = rest.headX - 10;
+    joints.headY = rest.headY + s * 5;
+    joints.rArmX = rest.rArmX - 12 + s * 9;
+    joints.lArmX = rest.lArmX - 12 - s * 9;
+    joints.rArmZ = rest.rArmZ - 10 + c * 3;
+    joints.lArmZ = rest.lArmZ + 10 - c * 3;
+    joints.rElbow = rest.rElbow - 18 + Math.max(0, s) * 8;
+    joints.lElbow = rest.lElbow - 18 + Math.max(0, -s) * 8;
+    joints.rLegX = -38 - s * 14;
+    joints.lLegX = -38 + s * 14;
+    joints.rKnee = 62 + Math.max(0, -s) * 16;
+    joints.lKnee = 62 + Math.max(0, s) * 16;
+    bob = 0.9 + Math.abs(s) * 0.5;
+    sway = s * 0.3;
+    roll = c * 0.5;
+    cape = 2 + c * 2;
+  } else if (clip === "attack") {
+    // Sword swing: raise behind the shoulder, cut down, recover. Hard cut in the middle.
+    const u = (time / clipCycle("attack")) % 1;
+    const raise = smoothstep(Math.min(1, u / 0.32));
+    const cut = smoothstep(Math.max(0, Math.min(1, (u - 0.32) / 0.18)));
+    const back = smoothstep(Math.max(0, Math.min(1, (u - 0.5) / 0.5)));
+    const rArmX = mix(mix(rest.rArmX, -152, raise), 48, cut);
+    joints.rArmX = mix(rArmX, rest.rArmX, back);
+    const rArmZ = mix(mix(rest.rArmZ, -12, raise), 22, cut);
+    joints.rArmZ = mix(rArmZ, rest.rArmZ, back);
+    const rElbow = mix(mix(rest.rElbow, -78, raise), -6, cut);
+    joints.rElbow = mix(rElbow, rest.rElbow, back);
+    joints.lArmX = rest.lArmX - 16 * cut;
+    joints.lArmZ = rest.lArmZ + 14 * cut;
+    joints.bodyX = rest.bodyX + 9 * cut - 4 * raise;
+    joints.headX = rest.headX + 4 * cut;
+    joints.headY = rest.headY - 14 * cut;
+    joints.rLegX = rest.rLegX - 12 * cut;
+    joints.lLegX = rest.lLegX + 8 * cut;
+    joints.rKnee = rest.rKnee + 12 * cut;
+    bob = 0.35 * cut;
+    sway = 0.7 * cut;
+    roll = -1.4 * cut;
+    cape = 5 * cut;
+  } else if (clip === "fly") {
+    // Elytra glide: torso forward, arms swept back, cape streaming.
+    const t = (time * Math.PI * 2) / clipCycle("fly");
+    const s = Math.sin(t);
+    joints.bodyX = rest.bodyX + 24;
+    joints.headX = rest.headX - 18;
+    joints.headY = rest.headY + s * 3;
+    joints.rArmX = rest.rArmX + 34 + s * 4;
+    joints.lArmX = rest.lArmX + 34 - s * 4;
+    joints.rArmZ = rest.rArmZ - 18;
+    joints.lArmZ = rest.lArmZ + 18;
+    joints.rElbow = rest.rElbow - 12;
+    joints.lElbow = rest.lElbow - 12;
+    joints.rLegX = rest.rLegX + 18 + s * 3;
+    joints.lLegX = rest.lLegX + 18 - s * 3;
+    joints.rKnee = rest.rKnee + 14;
+    joints.lKnee = rest.lKnee + 14;
+    bob = 1.2 + s * 1.1;
+    sway = s * 0.5;
+    roll = Math.cos(t) * 1.2;
+    cape = 24 + Math.sin(t + 0.7) * 5;
+  } else if (clip === "swim") {
+    // Breaststroke: arms sweep out and together, legs kick on the off beat.
+    const t = (time * Math.PI * 2) / clipCycle("swim");
+    const sweep = Math.sin(t);
+    const kick = Math.sin(t * 2 + Math.PI / 2);
+    joints.bodyX = rest.bodyX + 26;
+    joints.headX = rest.headX - 26;
+    joints.rArmX = -118 + sweep * 34;
+    joints.lArmX = -118 + sweep * 34;
+    joints.rArmZ = rest.rArmZ - 26 - sweep * 18;
+    joints.lArmZ = rest.lArmZ + 26 + sweep * 18;
+    joints.rElbow = -34 - Math.max(0, sweep) * 22;
+    joints.lElbow = -34 - Math.max(0, sweep) * 22;
+    joints.rLegX = -16 + kick * 26;
+    joints.lLegX = -16 - kick * 26;
+    joints.rKnee = 34 + Math.max(0, kick) * 22;
+    joints.lKnee = 34 + Math.max(0, -kick) * 22;
+    bob = 0.6 + Math.sin(t * 2) * 0.5;
+    roll = Math.cos(t) * 1.6;
+    cape = 6 + sweep * 4;
+  } else if (clip === "nod") {
+    const t = (time * Math.PI * 4) / clipCycle("nod");
+    joints.headX = rest.headX + Math.sin(t) * 17;
+    joints.headY = rest.headY + Math.sin(t * 0.5) * 3;
+    joints.rArmZ = rest.rArmZ - 1.5;
+    joints.lArmZ = rest.lArmZ + 1.5;
+    bob = 0.2 + Math.cos(t) * 0.15;
+    cape = Math.sin(t * 0.5) * 1.5;
+  } else if (clip === "spin") {
+    const u = (time / clipCycle("spin")) % 1;
+    const eased = smoothstep(Math.min(1, Math.max(0, u)));
+    yaw = eased * 360;
+    const flare = Math.sin(u * Math.PI);
+    joints.rArmX = rest.rArmX + 10;
+    joints.lArmX = rest.lArmX + 10;
+    joints.rArmZ = rest.rArmZ - 28 * flare;
+    joints.lArmZ = rest.lArmZ + 28 * flare;
+    joints.rElbow = rest.rElbow - 20 * flare;
+    joints.lElbow = rest.lElbow - 20 * flare;
+    joints.headY = rest.headY;
+    joints.bodyX = rest.bodyX + 5 * flare;
+    joints.rLegX = rest.rLegX - 10 * flare;
+    joints.lLegX = rest.lLegX + 10 * flare;
+    bob = 1.1 * flare;
+    roll = Math.sin(u * Math.PI * 2) * 1.2;
+    cape = 8 * flare;
+  } else if (clip === "jump") {
+    // Crouch, launch, float, land, settle. Starts and ends on the rest pose.
+    const u = (time / clipCycle("jump")) % 1;
+    const crouch = pulse(u, 0, 0.22);
+    const launch = pulse(u, 0.22, 0.34);
+    const air = pulse(u, 0.34, 0.78);
+    const land = pulse(u, 0.78, 0.9);
+    joints.bodyX = rest.bodyX + crouch * 16 - launch * 6 + air * 4 + land * 12;
+    joints.rArmX = rest.rArmX + crouch * 46 - launch * 120 - air * 96 + land * 34;
+    joints.lArmX = rest.lArmX + crouch * 46 - launch * 120 - air * 96 + land * 34;
+    joints.rArmZ = rest.rArmZ - air * 24;
+    joints.lArmZ = rest.lArmZ + air * 24;
+    joints.rElbow = rest.rElbow - air * 30 - land * 20;
+    joints.lElbow = rest.lElbow - air * 30 - land * 20;
+    joints.rLegX = rest.rLegX - crouch * 44 + air * 26 + land * 30;
+    joints.lLegX = rest.lLegX - crouch * 44 + air * 26 + land * 30;
+    joints.rKnee = rest.rKnee + crouch * 62 + air * 54 + land * 46;
+    joints.lKnee = rest.lKnee + crouch * 62 + air * 54 + land * 46;
+    joints.headX = rest.headX - crouch * 8 - air * 8 + land * 10;
+    bob = -crouch * 2.6 + air * 7.2 - land * 2.2;
+    sway = 0;
+    roll = 0;
+    cape = crouch * 2 + air * 14 - land * 2;
+  } else if (clip === "sit") {
+    // Seated loop on top of the sit pose: breathing, dangling shins, quiet cape.
+    const t = (time * Math.PI * 2) / clipCycle("sit");
+    const s = Math.sin(t);
+    const base = SIT_JOINTS;
+    joints.bodyX = base.bodyX + s * 1.6;
+    joints.headX = base.headX + s * 2.2;
+    joints.headY = base.headY + Math.sin(t * 0.5) * 4;
+    joints.rArmX = base.rArmX + s * 2;
+    joints.lArmX = base.lArmX - s * 2;
+    joints.rArmZ = base.rArmZ - s * 1.5;
+    joints.lArmZ = base.lArmZ + s * 1.5;
+    joints.rElbow = base.rElbow + Math.sin(t + 0.4) * 5;
+    joints.lElbow = base.lElbow + Math.sin(t + 1.1) * 5;
+    joints.rLegX = base.rLegX + s * 2.5;
+    joints.lLegX = base.lLegX - s * 2.5;
+    joints.rKnee = base.rKnee + s * 3;
+    joints.lKnee = base.lKnee - s * 3;
+    bob = 0.25 + s * 0.2;
+    roll = s * 0.3;
+    cape = 2 + s * 1.5;
   }
 
-  return { joints, bob, sway, roll, cape };
+  return { joints, bob, sway, roll, cape, yaw };
 }
 
 function cloneAnimation(animation: AnimationDef): AnimationDef {
@@ -213,6 +447,7 @@ function frameFromSample(clip: BuiltinClipId, time: number): AnimationKeyframe {
     sway: clamp(sampled.sway, SCALAR_LIMITS.sway.min, SCALAR_LIMITS.sway.max),
     roll: clamp(sampled.roll, SCALAR_LIMITS.roll.min, SCALAR_LIMITS.roll.max),
     cape: clamp(sampled.cape, SCALAR_LIMITS.cape.min, SCALAR_LIMITS.cape.max),
+    ...(Math.abs(sampled.yaw) > 1e-6 ? { yaw: clamp(sampled.yaw, SCALAR_LIMITS.yaw.min, SCALAR_LIMITS.yaw.max) } : {}),
   };
 }
 
@@ -353,6 +588,10 @@ function parseKeyframe(
     }
     frame[key] = raw;
   }
+  if (value.ease !== undefined) {
+    if (!isEaseId(value.ease)) return { ok: false, error: code("err.animEase", { n }) };
+    frame.ease = value.ease;
+  }
   return { ok: true, frame };
 }
 
@@ -412,7 +651,7 @@ export function sampleAnimation(animation: AnimationDef, time: number, rest: Joi
     rawMix = span > 0 ? (localTime - from.time) / span : 0;
   }
 
-  const mix = smoothstep(Math.max(0, Math.min(1, rawMix)));
+  const mix = applyEase(from.ease, rawMix);
 
   const joints = {} as Joints;
   for (const key of Object.keys(JOINT_LIMITS) as (keyof Joints)[]) {
@@ -427,6 +666,7 @@ export function sampleAnimation(animation: AnimationDef, time: number, rest: Joi
     sway: from.sway + (to.sway - from.sway) * mix,
     roll: from.roll + (to.roll - from.roll) * mix,
     cape: from.cape + (to.cape - from.cape) * mix,
+    yaw: (from.yaw ?? 0) + ((to.yaw ?? 0) - (from.yaw ?? 0)) * mix,
   };
 }
 
@@ -448,6 +688,7 @@ function sampleFrame(frame: AnimationKeyframe, rest: Joints): ClipSample {
     sway: frame.sway,
     roll: frame.roll,
     cape: frame.cape,
+    yaw: frame.yaw ?? 0,
   };
 }
 

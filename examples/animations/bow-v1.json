@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "name": "Bow (v1)",
+  "duration": 1.6,
+  "loop": true,
+  "keyframes": [
+    { "time": 0, "joints": { "bodyX": 0, "headX": 0 }, "bob": 0 },
+    { "time": 0.8, "joints": { "bodyX": 18, "headX": 10 }, "bob": -1.5 },
+    { "time": 1.6, "joints": { "bodyX": 0, "headX": 0 }, "bob": 0 }
+  ]
+}

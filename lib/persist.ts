@@ -1,4 +1,4 @@
-import { animationDocument, parseAnimationDocument } from "./motion.ts";
+import { CLIPS, animationDocument, parseAnimationDocument } from "./motion.ts";
 import type { PropClip } from "./prop-clip.ts";
 import type { AnimationDef, BackgroundFit, CameraSnapshot, ClipId, Joints, LayerMode, PlayerDraft, SceneDraft, SceneProp } from "./types";
 
@@ -6,7 +6,7 @@ export function layerModeFrom(value: unknown): LayerMode {
   return value === "voxel" ? "voxel" : "flat";
 }
 
-const CLIP_IDS = new Set<ClipId>(["none", "idle", "walk", "run", "wave", "cheer", "custom"]);
+const CLIP_IDS = new Set<ClipId>([...CLIPS.map((clip) => clip.id), "custom"]);
 
 export function clipIdFrom(value: unknown, fallback: ClipId): ClipId {
   return typeof value === "string" && CLIP_IDS.has(value as ClipId) ? (value as ClipId) : fallback;

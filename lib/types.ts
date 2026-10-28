@@ -52,9 +52,26 @@ export type BackgroundFit = "cover" | "contain";
 export type GradeId = "clean" | "hologram" | "ice" | "comic";
 export type OutlineId = "none" | "ink" | "sticker";
 export type LightId = "soft" | "hard" | "neon" | "moon";
-export type BuiltinClipId = "none" | "idle" | "walk" | "run" | "wave" | "cheer";
+export type BuiltinClipId =
+  | "none"
+  | "idle"
+  | "walk"
+  | "run"
+  | "wave"
+  | "cheer"
+  | "crouch"
+  | "attack"
+  | "fly"
+  | "swim"
+  | "nod"
+  | "spin"
+  | "jump"
+  | "sit";
 export type ClipId = BuiltinClipId | "custom";
 export type LayerMode = "flat" | "voxel";
+
+/** Interpolation used from this keyframe to the next. Missing means smoothstep (v1 behavior). */
+export type EaseId = "linear" | "smoothstep" | "ease-in-out";
 
 export type AnimationKeyframe = {
   time: number;
@@ -64,6 +81,10 @@ export type AnimationKeyframe = {
   sway: number;
   roll: number;
   cape: number;
+  /** Optional. Absent segments keep the original v1 smoothstep. */
+  ease?: EaseId;
+  /** Turn of the whole body in degrees. Omitted when zero, so v1 files stay byte-identical. */
+  yaw?: number;
 };
 
 /** Versioned keyframe animation format used by imports, exports, and share links. */

@@ -1,0 +1,31 @@
+{
+  "v": 2,
+  "meta": { "name": "Eased keyframes", "note": "A hand-authored v1 animation with per-segment easing and a body turn." },
+  "cast": [
+    {
+      "id": "actor",
+      "name": "Steve",
+      "skin": "steve",
+      "pose": "idle",
+      "motion": {
+        "speed": 1,
+        "animation": {
+          "v": 1,
+          "name": "Bow and turn",
+          "duration": 2.4,
+          "loop": true,
+          "keyframes": [
+            { "time": 0, "joints": { "bodyX": 0, "headX": 0, "rArmZ": -8 }, "bob": 0, "yaw": 0, "ease": "ease-in-out" },
+            { "time": 0.9, "joints": { "bodyX": 16, "headX": 12, "rArmZ": -46 }, "bob": -2, "yaw": 120, "ease": "smoothstep" },
+            { "time": 1.7, "joints": { "bodyX": 6, "headX": -6, "rArmZ": -20 }, "bob": 1, "yaw": 240, "ease": "linear" },
+            { "time": 2.4, "joints": { "bodyX": 0, "headX": 0, "rArmZ": -8 }, "bob": 0, "yaw": 360, "ease": "ease-in-out" }
+          ]
+        }
+      }
+    }
+  ],
+  "camera": { "preset": "full" },
+  "stage": { "pack": "nether-cinema", "godrays": true },
+  "text": { "title": "Eased keys", "subtitle": "linear · smoothstep · ease-in-out", "template": "lower-third" },
+  "export": { "format": "youtube", "motion": { "fps": 20, "gifEdge": 720, "mp4Edge": 1080, "mp4Fps": 30 } }
+}

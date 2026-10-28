@@ -8,9 +8,12 @@ import {
   followPose,
   moveKeyframe,
   removeKeyframe,
+  channelValue,
   setDuration,
   waveStarter,
+  writeEase,
   writeJoint,
+  writeYaw,
 } from "../lib/timeline.ts";
 
 const rest = poseById("idle").joints;
@@ -85,5 +88,51 @@ describe("timeline edits stay on animation JSON v1", () => {
     assert.equal(armed.ok, true);
     if (!armed.ok) return;
     assert.equal(armed.animation.keyframes[1].joints.rArmZ, -180);
+  });
+});
+
+describe("timeline ease and body turn", () => {
+  it("writes and clears easing without touching the joints", () => {
+    const wave = waveStarter("Wave", rest);
+    const eased = writeEase(wave, 1, "linear");
+    assert.equal(eased.ok, true);
+    if (!eased.ok) return;
+    assert.equal(eased.animation.keyframes[1].ease, "linear");
+    assert.deepEqual(eased.animation.keyframes[1].joints, wave.keyframes[1].joints);
+    assert.equal(parseAnimationDocument(eased.animation).ok, true);
+
+    const cleared = writeEase(eased.animation, 1, null);
+    assert.equal(cleared.ok, true);
+    if (!cleared.ok) return;
+    assert.equal("ease" in cleared.animation.keyframes[1], false);
+    assert.equal(parseAnimationDocument(cleared.animation).ok, true);
+
+    // Writing the default leaves the file byte-identical to a v1 export.
+    const stepped = writeEase(wave, 1, "smoothstep");
+    assert.equal(stepped.ok, true);
+    if (!stepped.ok) return;
+    assert.equal("ease" in stepped.animation.keyframes[1], false);
+    assert.deepEqual(stepped.animation, wave);
+  });
+
+  it("writes body turn in degrees, clamps it, and drops zero", () => {
+    const wave = waveStarter("Wave", rest);
+    const turned = writeYaw(wave, 1, 90);
+    assert.equal(turned.ok, true);
+    if (!turned.ok) return;
+    assert.equal(turned.animation.keyframes[1].yaw, 90);
+    assert.equal(channelValue(turned.animation.keyframes[1], "yaw", rest), 90);
+    assert.equal(parseAnimationDocument(turned.animation).ok, true);
+
+    const spun = writeYaw(wave, 1, 9000);
+    assert.equal(spun.ok, true);
+    if (!spun.ok) return;
+    assert.equal(spun.animation.keyframes[1].yaw, 720);
+
+    const reset = writeYaw(turned.animation, 1, 0);
+    assert.equal(reset.ok, true);
+    if (!reset.ok) return;
+    assert.equal("yaw" in reset.animation.keyframes[1], false);
+    assert.equal(channelValue(reset.animation.keyframes[1], "yaw", rest), 0);
   });
 });

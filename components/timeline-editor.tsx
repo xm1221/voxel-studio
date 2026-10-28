@@ -16,13 +16,16 @@ import {
   setDuration,
   setLoop,
   waveStarter,
+  writeEase,
   writeJoint,
   writePose,
   writeScalar,
+  writeYaw,
   type CurveChannel,
   type EditResult,
 } from "@/lib/timeline";
-import type { AnimationDef, Joints } from "@/lib/types";
+import { EASES } from "@/lib/motion";
+import type { AnimationDef, EaseId, Joints } from "@/lib/types";
 
 const JOINT_KEYS = Object.keys(JOINT_LIMITS) as (keyof Joints)[];
 
@@ -121,7 +124,7 @@ export function TimelineEditor({
     return sampleAnimation(animation, time, rest);
   });
   const curve = samples.map((sample, step) => {
-    const value = channel === "bob" || channel === "sway" || channel === "roll" || channel === "cape" ? sample[channel] : sample.joints[channel];
+    const value = channel === "bob" || channel === "sway" || channel === "roll" || channel === "cape" || channel === "yaw" ? sample[channel] : sample.joints[channel];
     const x = (step / 39) * 100;
     const y = 100 - ((value - limits.min) / Math.max(0.001, limits.max - limits.min)) * 100;
     return `${x},${Math.min(100, Math.max(0, y))}`;
@@ -228,6 +231,34 @@ export function TimelineEditor({
         ))}
       </div>
       <p className="hint">{tr("timelineHint")}</p>
+      <label className="field">
+        <span>{tr("timelineEase")}</span>
+        <select
+          value={frame.ease ?? "smoothstep"}
+          aria-label={tr("timelineEase")}
+          title={tr("timelineEaseFrom")}
+          onChange={(event) => apply(writeEase(animation, selected, event.target.value === "smoothstep" ? null : (event.target.value as EaseId)))}
+        >
+          {EASES.map((ease) => (
+            <option key={ease} value={ease}>
+              {tr(`ease.${ease}`)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="slider">
+        <span>{tr("timelineYaw")}</span>
+        <input
+          type="range"
+          min={-360}
+          max={360}
+          step={1}
+          value={frame.yaw ?? 0}
+          aria-label={tr("timelineYaw")}
+          onChange={(event) => apply(writeYaw(animation, selected, Number(event.target.value)))}
+        />
+        <strong>{Math.round(frame.yaw ?? 0)}°</strong>
+      </label>
       <div className="row">
         <button className="btn" type="button" onClick={() => apply(addKeyframe(animation, shownTime, rest))}>
           {tr("timelineAdd")}
@@ -292,6 +323,7 @@ export function TimelineEditor({
 }
 
 function channelLabel(channel: CurveChannel): MessageKey {
+  if (channel === "yaw") return "timelineYaw";
   if (channel === "bob" || channel === "sway" || channel === "roll" || channel === "cape") return `scalar.${channel}`;
   return `joint.${channel}`;
 }
