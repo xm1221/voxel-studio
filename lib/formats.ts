@@ -25,15 +25,10 @@ const FORMAT_ALIAS: Record<string, string> = {
   phone: "story",
 };
 
+/** Ids scene JSON accepts. Aliases follow the canonical sizes in `FORMATS`. */
+export const EXPORT_FORMAT_IDS: readonly string[] = [...FORMATS.map((format) => format.id), ...Object.keys(FORMAT_ALIAS)];
+
 export function formatById(id: string): ExportFormat {
   const canonical = FORMAT_ALIAS[id] ?? id;
   return FORMATS.find((format) => format.id === canonical) ?? FORMATS[3];
-}
-
-/** GIF 按当前比例缩小，长边不超过 maxEdge，宽高都取偶数。 */
-export function gifFrameSize(format: ExportFormat, maxEdge = 480) {
-  const scale = Math.min(1, maxEdge / Math.max(format.width, format.height));
-  const width = Math.max(2, Math.round((format.width * scale) / 2) * 2);
-  const height = Math.max(2, Math.round((format.height * scale) / 2) * 2);
-  return { width, height };
 }

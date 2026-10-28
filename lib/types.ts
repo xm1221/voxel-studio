@@ -137,6 +137,11 @@ export type SceneDraft = {
   activePropId: string | null;
   /** Keyframes for prop transforms. Omitted from older scenes. */
   propClip?: PropClip | null;
+  /**
+   * Last applied scene pack. Look fields are stored beside it, so a later
+   * tweak still round-trips and the pack id survives copy, share, and the CLI.
+   */
+  pack?: string | null;
   background: BackgroundId;
   /** Data URL kept on this browser. Share links omit it. */
   backgroundImage: string | null;

@@ -7,7 +7,7 @@ import { catalogLabel, loadCatalog, subscribeCatalog } from "@/lib/catalog";
 import { createAlexSkin, createSteveSkin } from "@/lib/defaults";
 import { StudioEngine } from "@/lib/engine";
 import { LOCALE_STORAGE_KEY, code, errorNote, htmlLang, note, parseNote, readLocale, t, type Locale, type MessageKey, type Note } from "@/lib/i18n";
-import { FORMATS, formatById } from "@/lib/formats";
+import { FORMATS } from "@/lib/formats";
 import { animationDocument, animationDownloadName, animationForClip, CLIPS, MAX_ANIMATION_TEXT_LENGTH, parseAnimationText } from "@/lib/motion";
 import { backgroundImageFrom, decodePayload, encodePayload, toPayload } from "@/lib/persist";
 import { POSES } from "@/lib/poses";
@@ -29,7 +29,7 @@ import { DEFAULT_MOTION_EXPORT, type MotionExportOptions } from "@/lib/motion-ex
 import { EMPTY_POSTER_TEXT, POSTER_TEMPLATES, posterHasText, type PosterText } from "@/lib/poster";
 import { SCENE_PACKS, applyScenePack, type ScenePack } from "@/lib/scene-packs";
 import { toSceneDocument } from "@/lib/scene-doc";
-import { planMotion } from "@/lib/exporters";
+import { planExport, stageIsTransparent } from "@/lib/exporters";
 import { installPixelstage, registerPixelstage, unregisterPixelstage, type PixelstageHandlers } from "@/lib/render-api";
 import { stageHandlers } from "@/lib/stage-hooks";
 import type { CameraSnapshot, Joints, PlayerDraft, SceneDraft, SceneProp } from "@/lib/types";
@@ -142,7 +142,6 @@ export function Studio() {
   const [poster, setPoster] = useState<PosterText>(EMPTY_POSTER_TEXT);
   const [motionExport, setMotionExport] = useState<MotionExportOptions>(DEFAULT_MOTION_EXPORT);
   const [mp4Progress, setMp4Progress] = useState<number | null>(null);
-  const [activePack, setActivePack] = useState<string | null>(null);
   const [sceneJsonOpen, setSceneJsonOpen] = useState(false);
   const posterRef = useRef(poster);
   const motionRef = useRef(motionExport);
@@ -1005,21 +1004,20 @@ export function Studio() {
 
   async function download(transparent: boolean) {
     if (!scene || !engineRef.current) return;
-    const format = formatById(scene.formatId);
+    const plan = planExport(scene, { transparent }, "png");
     setBusy(true);
     try {
       const blob = await engineRef.current.capture({
-        width: format.width,
-        height: format.height,
-        round: transparent ? false : format.round,
-        transparent,
-        poster: transparent ? null : poster,
+        width: plan.width,
+        height: plan.height,
+        round: plan.round,
+        transparent: plan.transparent,
+        poster: plan.transparent ? null : poster,
       });
       const link = document.createElement("a");
       const url = URL.createObjectURL(blob);
       link.href = url;
-      const who = (active?.name || "skin").toLowerCase().replace(/[^a-z0-9_-]+/gi, "-");
-      link.download = `pixelstage-${who}-${transparent ? "transparent" : format.id}.png`;
+      link.download = plan.filename;
       link.click();
       URL.revokeObjectURL(url);
     } catch (reason) {
@@ -1031,16 +1029,14 @@ export function Studio() {
 
   async function downloadGif() {
     if (!scene || !engineRef.current) return;
-    const format = formatById(scene.formatId);
-    const transparent = scene.background === "none" && !scene.backgroundImage;
-    const plan = planMotion(scene, format, motionExport, "gif");
+    const plan = planExport(scene, { motion: motionExport, transparent: stageIsTransparent(scene) }, "gif");
     setBusy(true);
     try {
       const blob = await engineRef.current.captureClip({
         width: plan.width,
         height: plan.height,
-        round: format.round && !transparent,
-        transparent,
+        round: plan.round,
+        transparent: plan.transparent,
         frames: plan.frames,
         seconds: plan.seconds,
         poster,
@@ -1048,8 +1044,7 @@ export function Studio() {
       const link = document.createElement("a");
       const url = URL.createObjectURL(blob);
       link.href = url;
-      const who = (active?.name || "skin").toLowerCase().replace(/[^a-z0-9_-]+/gi, "-");
-      link.download = `pixelstage-${who}-${scene.players.length > 1 ? "players" : active?.clip ?? "clip"}.gif`;
+      link.download = plan.filename;
       link.click();
       URL.revokeObjectURL(url);
       setMessage(note("gifExported", { width: plan.width, height: plan.height }));
@@ -1062,9 +1057,7 @@ export function Studio() {
 
   async function downloadMp4() {
     if (!scene || !engineRef.current) return;
-    const format = formatById(scene.formatId);
-    const transparent = scene.background === "none" && !scene.backgroundImage;
-    const plan = planMotion(scene, format, motionExport, "mp4");
+    const plan = planExport(scene, { motion: motionExport, transparent: stageIsTransparent(scene) }, "mp4");
     setBusy(true);
     setMp4Progress(0);
     try {
@@ -1074,16 +1067,15 @@ export function Studio() {
         fps: plan.fps,
         frames: plan.frames,
         seconds: plan.seconds,
-        bitrate: motionExport.mp4Bitrate,
+        bitrate: plan.bitrate,
         poster,
-        transparent,
+        transparent: plan.transparent,
         onProgress: setMp4Progress,
       });
       const link = document.createElement("a");
       const url = URL.createObjectURL(blob);
       link.href = url;
-      const who = (active?.name || "skin").toLowerCase().replace(/[^a-z0-9_-]+/gi, "-");
-      link.download = `pixelstage-${who}-${scene.players.length > 1 ? "players" : active?.clip ?? "clip"}.mp4`;
+      link.download = plan.filename;
       link.click();
       URL.revokeObjectURL(url);
       setMessage(note("mp4Exported", { width: plan.width, height: plan.height, fps: plan.fps }));
@@ -1110,7 +1102,6 @@ export function Studio() {
     if (!scene) return;
     patch((current) => applyScenePack(current, pack));
     engineRef.current?.setCamera(pack.camera);
-    setActivePack(pack.id);
     setMessage(note("scenePackApplied", { name: ui(locale, `pack.${pack.id}`) }));
   }
 
@@ -1307,7 +1298,7 @@ export function Studio() {
                     <button
                       key={pack.id}
                       type="button"
-                      className={activePack === pack.id ? "pose active" : "pose"}
+                      className={scene.pack === pack.id ? "pose active" : "pose"}
                       title={ui(locale, `packHint.${pack.id}`)}
                       onClick={() => applyPack(pack)}
                     >

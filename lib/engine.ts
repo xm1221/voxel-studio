@@ -862,6 +862,7 @@ export class StudioEngine {
     frames: number;
     seconds: number;
     poster?: PosterText | null;
+    signal?: AbortSignal;
   }) {
     return captureClip(this.host(), options);
   }

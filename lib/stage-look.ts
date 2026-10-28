@@ -16,7 +16,7 @@ export const DEFAULT_SCENE_LOOK = {
 
 /** Lights, grade, outline, godrays, and background — including a local background image. */
 export function resetSceneLook(scene: SceneDraft): SceneDraft {
-  return { ...scene, ...DEFAULT_SCENE_LOOK };
+  return { ...scene, ...DEFAULT_SCENE_LOOK, pack: null };
 }
 
 export const BACKGROUNDS: Record<Exclude<BackgroundId, "none">, number> = {

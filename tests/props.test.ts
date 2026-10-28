@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { decodePayload, encodePayload, toPayload } from "../lib/persist.ts";
-import { MAX_PROPS, parseSceneProps, placeProp, propSlot } from "../lib/props.ts";
+import { MAX_PROPS, parseSceneProps, placeProp, propSlot, type PropParseIssue } from "../lib/props.ts";
 import { poseById } from "../lib/poses.ts";
 import { sceneFromPayload } from "../lib/studio-state.ts";
 import type { SceneDraft } from "../lib/types.ts";
@@ -143,6 +143,34 @@ describe("scene props", () => {
     assert.equal(parsed[0].rotation.y, 90);
     assert.equal(parsed[0].pivot.x, 0);
     assert.equal(placeProp("stone", parsed), null);
+  });
+
+  it("uses one field table for share links and scene documents", () => {
+    const entry = {
+      id: "o_1",
+      item: "sword",
+      name: " Blade ",
+      position: { x: 1, y: 2, z: 3 },
+      rotationY: 40,
+      scale: 2,
+      pivot: { x: 0, y: 8, z: 0 },
+      locked: true,
+    };
+    const issues: PropParseIssue[] = [];
+    const strict = parseSceneProps([entry], { strict: true, onIssue: (issue) => issues.push(issue) });
+    const lenient = parseSceneProps([entry]);
+    assert.deepEqual(issues, []);
+    assert.equal(lenient.length, 1);
+    assert.deepEqual(strict, lenient);
+    assert.equal(strict[0].catalogId, "item:diamond_sword");
+    assert.equal(strict[0].name, "Blade");
+    assert.equal(strict[0].rotation.y, 40);
+    assert.equal(strict[0].pivot.y, 8);
+    assert.equal(strict[0].locked, true);
+    assert.equal(strict[0].scale.x, 2);
+    const missingId = parseSceneProps([{ item: "stone", locked: true }], { strict: true });
+    assert.equal(missingId[0]?.id, "o_1");
+    assert.equal(parseSceneProps([{ item: "stone", locked: true }]).length, 0);
   });
 
   it("round-trips a full transform and still accepts a namespaced id", () => {

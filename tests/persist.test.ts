@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { clipExportSpanForPlayers, parseAnimationDocument } from "../lib/motion.ts";
+import { sceneFromPayload } from "../lib/studio-state.ts";
 import { poseById } from "../lib/poses.ts";
 import {
   backgroundImageFrom,
@@ -183,6 +184,19 @@ describe("pose url serialization", () => {
     const legacy = playerSettingsFromPayload(decoded.players[0], decoded);
     assert.equal(legacy.clip, "wave");
     assert.equal(legacy.customAnimation, null);
+  });
+
+  it("keeps a scene pack id on the v1 payload used by share links and local saves", () => {
+    const draft = scene();
+    draft.pack = "hero-studio";
+    const payload = toPayload(draft, undefined, false);
+    assert.equal(payload.pack, "hero-studio");
+    const decoded = decodePayload(encodePayload(payload));
+    assert.equal(decoded?.pack, "hero-studio");
+    const restored = sceneFromPayload(decoded!, "steve", "alex");
+    assert.equal(restored.scene.pack, "hero-studio");
+    draft.pack = "nope";
+    assert.equal(toPayload(draft, undefined, false).pack, undefined);
   });
 
   it("uses the slowest player when calculating a shared GIF span", () => {

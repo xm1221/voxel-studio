@@ -132,6 +132,8 @@ export type MotionFrameOptions = {
   frames: number;
   seconds: number;
   poster?: PosterText | null;
+  /** Aborts between frames. Already-rendered frames are discarded by the caller. */
+  signal?: AbortSignal;
   /** Called once per finished frame, in order. Await it to apply backpressure. */
   onFrame: (canvas: HTMLCanvasElement, index: number) => void | Promise<void>;
 };
@@ -174,6 +176,7 @@ export async function renderMotionFrames(host: CaptureHost, options: MotionFrame
     host.holder.position.x = baseX + subjectShiftFor(host, options, options.width, options.height);
 
     for (let frame = 0; frame < options.frames; frame += 1) {
+      if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
       const time = (frame / options.frames) * options.seconds;
       if (allStill) {
         host.holder.rotation.y = (time / options.seconds) * Math.PI * 2;
@@ -213,6 +216,7 @@ export async function captureClip(
     frames: number;
     seconds: number;
     poster?: PosterText | null;
+    signal?: AbortSignal;
   },
 ) {
   const gifFrames: GifFrame[] = [];

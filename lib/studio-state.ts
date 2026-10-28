@@ -4,6 +4,7 @@ import { poseById, resetPlayer } from "./poses.ts";
 import { backgroundFitFrom, backgroundImageFrom, playerSettingsFromPayload, type SharePayload } from "./persist.ts";
 import { parsePropClip } from "./prop-clip.ts";
 import { activePropFrom, parseSceneProps } from "./props.ts";
+import { scenePackById } from "./scene-packs.ts";
 import { DEFAULT_SCENE_LOOK, resetSceneLook } from "./stage-look.ts";
 import type { CameraSnapshot, PlayerDraft, SceneDraft } from "./types.ts";
 
@@ -60,7 +61,7 @@ function positionPart(value: unknown, fallback: number, min: number, max: number
 
 export function sceneFromPayload(payload: SharePayload, steve: string, alex: string): { scene: SceneDraft; camera?: CameraSnapshot; refetch: string[] } {
   const refetch: string[] = [];
-  const players = payload.players.slice(0, 4).map((player) => {
+  const players = payload.players.slice(0, 4).map((player, index) => {
     const settings = playerSettingsFromPayload(player, payload);
     let skinUrl = player.skinUrl || "";
     if (player.source === "builtin") {
@@ -72,7 +73,7 @@ export function sceneFromPayload(payload: SharePayload, steve: string, alex: str
       skinUrl = steve;
     }
     return {
-      id: player.id || newId(),
+      id: player.id || `p_${index + 1}`,
       name: player.name || "Steve",
       source: player.source || "builtin",
       username: player.username ?? null,
@@ -104,6 +105,7 @@ export function sceneFromPayload(payload: SharePayload, steve: string, alex: str
       props,
       activePropId: activePropFrom(payload.activePropId, props),
       propClip: parsePropClip(payload.propClip),
+      pack: scenePackById(payload.pack)?.id ?? null,
       background: payload.background || "studio",
       backgroundImage: backgroundImageFrom(payload.backgroundImage),
       backgroundFit: backgroundFitFrom(payload.backgroundFit),

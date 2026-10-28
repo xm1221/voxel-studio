@@ -85,10 +85,13 @@ A scene file is one object. Unknown top-level fields are rejected. See
 | `meta` | `name`, `author`, `note`. Free text, shown nowhere but in the file. |
 | `cast` | 1–4 members. `skin` (`steve`, `alex`, data URL, or http(s) URL), `username`, `model` (`default`/`slim`), `pose`, `motion`, `position`, `scale`, `nametag`, `bubble`, `outer`, `layers`, `cape`, `showCape`. |
 | `camera` | `preset` (`full`, `head`, `wide`) or `position`/`target` triples. |
-| `stage` | `pack`, `background`, `grade`, `outline`, `godrays`, `light`, `keyIntensity`, `backgroundImage`, `backgroundFit`. Later fields win over the pack. |
-| `props` | Up to 64. `item` catalog id (`block:stone`, `item:diamond_sword`, `entity:creeper`) or a legacy alias, plus `position`, `rotation`, `scale`, `hidden`. |
+| `stage` | `pack`, `background`, `grade`, `outline`, `godrays`, `light`, `keyIntensity`, `backgroundImage`, `backgroundFit`. Later fields win over the pack. `getScene()` writes `pack` back, so copy, share, and the CLI keep the same pack id. |
+| `props` | Up to 64. `item` catalog id (`block:stone`, `item:diamond_sword`, `entity:creeper`) or a legacy alias, plus `name`, `position`, `rotation`, `scale`, `pivot`, `hidden`, `locked`. Missing ids become `o_1`, `o_2`, … and stay stable across `getScene()`. |
+| `propClip` | Optional prop transform track (`v: 1`, `duration`, `loop`, `autoKey`, `keyframes`). Round-trips with the scene. |
 | `text` | Poster title block: `title`, `subtitle`, `kicker`, `template`, `scale`, `panel`. |
 | `export` | `format` and a `motion` block (`fps`, `gifEdge`, `mp4Edge`, `mp4Fps`, `mp4Bitrate`, `frames`). |
+
+Players without an id become `p_1`, `p_2`, and keep that id when the document is written back. Share links and local saves stay on the v1 payload in `lib/persist.ts` (it stores `pack` too). `getScene()`, copied scene JSON, and the CLI use this v2 document.
 
 Poses (`pose`): `idle`, `wave`, `flex`, `think`, `salute`, `sit`, `hero`,
 `walk`. `pose` may also be an object of joint angles (`{ "headX": 10 }`).
@@ -167,6 +170,7 @@ A scene can also be opened straight from a URL in the studio:
 | Path | Purpose |
 | --- | --- |
 | `lib/scene-doc.ts` | v2 parse/serialize, v1 wrapping, validation and error codes |
+| `lib/exporters.ts` | `planExport(scene, input, target)` — size, frames, fps, filename, transparency |
 | `lib/motion.ts` | presets, v1 animation parsing, easing, sampling |
 | `lib/motion-export.ts` | GIF/MP4 frame plans and limits |
 | `lib/capture.ts` | deterministic still and per-frame rendering |

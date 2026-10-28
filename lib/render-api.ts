@@ -34,6 +34,8 @@ export type MotionApiOptions = {
   transparent?: boolean;
   text?: Partial<PosterText> | null;
   onProgress?: (progress: number) => void;
+  /** Aborts encoding between frames. GIF and MP4 both honor it. */
+  signal?: AbortSignal;
 };
 
 export type FrameResult = { dataUrl: string; mime: string; width: number; height: number };

@@ -37,7 +37,7 @@ Options:
   --frames <n>        Exact frame count. Default: derived from the motion.
   --seconds <n>       Clip length. Default: derived from the motion.
   --bitrate <bps>     MP4 bitrate. Default 6000000.
-  --transparent       Transparent background (PNG and GIF).
+  --transparent       Transparent background (PNG, GIF, and MP4).
   --round             Round avatar crop.
   --port <n>          Port for the local server. Default: a free port.
   --url <url>         Use an already running server instead of starting one.
@@ -335,7 +335,7 @@ try {
     );
   } else {
     result = await page.evaluate(
-      async ({ size, frames: frameCount, seconds: clipSeconds, fps: rate, edge: longEdge, bitrate: bits }) => {
+      async ({ size, frames: frameCount, seconds: clipSeconds, fps: rate, edge: longEdge, bitrate: bits, transparent }) => {
         const api = window.pixelstage;
         return api.exportMP4({
           ...size,
@@ -344,9 +344,10 @@ try {
           ...(rate === undefined ? {} : { fps: rate }),
           ...(longEdge === undefined ? {} : { longEdge }),
           ...(bits === undefined ? {} : { bitrate: bits }),
+          transparent,
         });
       },
-      { size: sizeInput, frames, seconds, fps, edge, bitrate },
+      { size: sizeInput, frames, seconds, fps, edge, bitrate, transparent: args.flags.has("transparent") },
     );
   }
   const elapsed = Date.now() - started;

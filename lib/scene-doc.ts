@@ -1,11 +1,14 @@
-import { catalogIdKind, normalizeCatalogId } from "./catalog.ts";
+import { catalogIdKind } from "./catalog.ts";
+import { EXPORT_FORMAT_IDS } from "./formats.ts";
 import { DEFAULT_MOTION_EXPORT, parseMotionExport, type MotionExportOptions } from "./motion-export.ts";
 import { CLIPS, clipById, parseAnimationDocument } from "./motion.ts";
 import { parsePosterText, type PosterText } from "./poster.ts";
 import { poseById, POSES } from "./poses.ts";
+import { parsePropClip, type PropClip } from "./prop-clip.ts";
 import { JOINT_LIMITS } from "./presets.ts";
+import { parseSceneProps } from "./props.ts";
 import { SCENE_PACKS, scenePackById, scenePackLook, type ScenePack } from "./scene-packs.ts";
-import { makePlayer, newId, sceneFromPayload } from "./studio-state.ts";
+import { makePlayer, sceneFromPayload } from "./studio-state.ts";
 import type {
   AnimationDef,
   BackgroundId,
@@ -88,10 +91,13 @@ export type SceneDocProp = {
   /** Catalog id such as `block:stone`, `item:diamond_sword`, `entity:creeper`, or a legacy alias. */
   item?: string;
   catalogId?: string;
+  name?: string;
   position?: { x?: number; y?: number; z?: number };
   rotation?: { x?: number; y?: number; z?: number };
   scale?: number | { x?: number; y?: number; z?: number };
+  pivot?: { x?: number; y?: number; z?: number };
   hidden?: boolean;
+  locked?: boolean;
 };
 
 export type SceneDocument = {
@@ -101,6 +107,8 @@ export type SceneDocument = {
   camera?: SceneDocCamera;
   stage?: SceneDocStage;
   props?: SceneDocProp[];
+  /** Prop transform track. Same shape the studio stores on the draft. */
+  propClip?: PropClip | null;
   text?: Partial<PosterText>;
   export?: { format?: string; motion?: Partial<MotionExportOptions> };
 };
@@ -121,8 +129,9 @@ export type ParsedScene = {
 export type ParseSceneResult = { ok: true; value: ParsedScene } | { ok: false; errors: SceneDocIssue[] };
 
 const MAX_CAST = 4;
-const MAX_PROPS = 64;
 const MAX_TEXT = 4_000_000;
+const FORMAT_ID_SET = new Set(EXPORT_FORMAT_IDS);
+const CAST_ID = /^[a-zA-Z0-9_-]{1,24}$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -289,7 +298,7 @@ function parseCast(value: unknown, index: number, steve: string, alex: string, e
     return null;
   }
 
-  const id = typeof value.id === "string" && /^[a-zA-Z0-9_-]{1,24}$/.test(value.id) ? value.id : newId();
+  const id = typeof value.id === "string" && CAST_ID.test(value.id) ? value.id : `p_${index + 1}`;
   const name = typeof value.name === "string" && value.name.trim() ? value.name.trim().slice(0, 32) : "Steve";
   const model: ModelType = value.model === "slim" ? "slim" : "default";
   const username = typeof value.username === "string" ? value.username.trim().slice(0, 16) : null;
@@ -355,51 +364,7 @@ function parseCast(value: unknown, index: number, steve: string, alex: string, e
 }
 
 function parseProps(value: unknown, errors: SceneDocIssue[]): SceneProp[] {
-  if (value === undefined) return [];
-  if (!Array.isArray(value)) {
-    errors.push({ path: "props", message: "props must be an array.", code: "err.sceneProps" });
-    return [];
-  }
-  const props: SceneProp[] = [];
-  const used = new Set<string>();
-  value.slice(0, MAX_PROPS).forEach((entry, index) => {
-    const path = `props[${index}]`;
-    if (!isRecord(entry)) {
-      errors.push({ path, message: "Each prop must be an object.", code: "err.sceneProps" });
-      return;
-    }
-    const catalogId = normalizeCatalogId(entry.catalogId ?? entry.item);
-    if (!catalogId) {
-      errors.push({ path: `${path}.item`, message: `Unknown prop "${String(entry.catalogId ?? entry.item)}". Use a catalog id like block:stone.`, code: "err.sceneProp" });
-      return;
-    }
-    let id = typeof entry.id === "string" && /^[a-zA-Z0-9_-]{1,24}$/.test(entry.id) ? entry.id : `o_${props.length + 1}`;
-    while (used.has(id)) id = `${id}_`;
-    used.add(id);
-    const rotation = isRecord(entry.rotation) ? entry.rotation : {};
-    const scale = typeof entry.scale === "number" ? entry.scale : entry.scale;
-    const scaleVec = typeof scale === "number" ? { x: scale, y: scale, z: scale } : vec(scale, 1);
-    props.push({
-      id,
-      catalogId,
-      name: typeof entry.name === "string" ? entry.name.slice(0, 48) : "",
-      position: vec(entry.position),
-      rotation: {
-        x: num(rotation.x, -720, 720, 0),
-        y: num(rotation.y, -720, 720, 0),
-        z: num(rotation.z, -720, 720, 0),
-      },
-      scale: {
-        x: Math.min(8, Math.max(0.05, scaleVec.x || 1)),
-        y: Math.min(8, Math.max(0.05, scaleVec.y || 1)),
-        z: Math.min(8, Math.max(0.05, scaleVec.z || 1)),
-      },
-      pivot: { x: 0, y: 0, z: 0 },
-      hidden: entry.hidden === true,
-      locked: false,
-    });
-  });
-  return props;
+  return parseSceneProps(value, { strict: true, onIssue: (issue) => errors.push(issue) });
 }
 
 function parseCamera(value: unknown, count: number, errors: SceneDocIssue[]): CameraSnapshot | null {
@@ -491,7 +456,7 @@ export function parseSceneDocument(value: unknown, skins: { steve: string; alex:
     };
   }
   // `$schema` is editor sugar, not scene data.
-  const topKeys = ["v", "$schema", "meta", "cast", "camera", "stage", "props", "text", "export"];
+  const topKeys = ["v", "$schema", "meta", "cast", "camera", "stage", "props", "propClip", "text", "export"];
   if (!hasOnly(value, topKeys)) {
     const extra = Object.keys(value).filter((key) => !topKeys.includes(key));
     return { ok: false, errors: [{ path: "", message: `Unknown top-level fields: ${extra.join(", ")}.`, code: "err.sceneUnknown" }] };
@@ -551,6 +516,17 @@ export function parseSceneDocument(value: unknown, skins: { steve: string; alex:
   }
 
   const props = parseProps(value.props, errors);
+  let propClip: PropClip | null = null;
+  if (value.propClip !== undefined && value.propClip !== null) {
+    propClip = parsePropClip(value.propClip);
+    if (!propClip) {
+      errors.push({
+        path: "propClip",
+        message: "propClip must be a v1 prop animation (duration, loop, autoKey, keyframes).",
+        code: "err.scenePropClip",
+      });
+    }
+  }
   if (errors.length) return { ok: false, errors };
 
   const camera = parseCamera(value.camera, players.length, errors);
@@ -561,7 +537,8 @@ export function parseSceneDocument(value: unknown, skins: { steve: string; alex:
     activeId: players[0].id,
     props,
     activePropId: props[0]?.id ?? null,
-    propClip: null,
+    propClip,
+    pack: stage.pack ?? null,
     background: stage.background ?? packLook?.background ?? "studio",
     backgroundImage: stage.backgroundImage ?? null,
     backgroundFit: stage.backgroundFit ?? "cover",
@@ -586,20 +563,6 @@ export function parseSceneDocument(value: unknown, skins: { steve: string; alex:
     },
   };
 }
-
-const FORMAT_ID_SET = new Set([
-  "avatar",
-  "square",
-  "xhs",
-  "youtube",
-  "story",
-  "desktop",
-  "banner",
-  "uhd",
-  "pfp",
-  "thumb",
-  "phone",
-]);
 
 /** JSON text entry point. Caps the input before parsing. */
 export function parseSceneText(text: string, skins: { steve: string; alex: string }): ParseSceneResult {
@@ -651,6 +614,7 @@ export function toSceneDocument(
     cast,
     camera: options.camera ? { position: [...options.camera.p], target: [...options.camera.t] } : undefined,
     stage: {
+      ...(scene.pack && scenePackById(scene.pack) ? { pack: scene.pack } : {}),
       background: scene.background,
       grade: scene.grade,
       outline: scene.outline,
@@ -663,11 +627,15 @@ export function toSceneDocument(
     props: scene.props.map((prop) => ({
       id: prop.id,
       catalogId: prop.catalogId,
+      ...(prop.name ? { name: prop.name } : {}),
       position: { ...prop.position },
       rotation: { ...prop.rotation },
       scale: { ...prop.scale },
+      ...(prop.pivot.x !== 0 || prop.pivot.y !== 0 || prop.pivot.z !== 0 ? { pivot: { ...prop.pivot } } : {}),
       ...(prop.hidden ? { hidden: true } : {}),
+      ...(prop.locked ? { locked: true } : {}),
     })),
+    ...(scene.propClip ? { propClip: structuredClone(scene.propClip) } : {}),
     ...(options.poster ? { text: options.poster } : {}),
     export: {
       format: scene.formatId,

@@ -36,6 +36,7 @@
       "maxItems": 64,
       "items": { "$ref": "#/$defs/prop" }
     },
+    "propClip": { "$ref": "#/$defs/propClip" },
     "text": { "$ref": "#/$defs/text" },
     "export": { "$ref": "#/$defs/export" }
   },
@@ -233,31 +234,81 @@
           "description": "Catalog id (block:stone, item:diamond_sword, entity:creeper) or a legacy alias (stone, sword, creeper)."
         },
         "catalogId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 48 },
         "position": { "$ref": "#/$defs/vec3" },
-        "rotation": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "x": { "type": "number", "minimum": -720, "maximum": 720 },
-            "y": { "type": "number", "minimum": -720, "maximum": 720 },
-            "z": { "type": "number", "minimum": -720, "maximum": 720 }
-          }
-        },
+        "rotation": { "$ref": "#/$defs/euler" },
         "scale": {
           "oneOf": [
             { "type": "number", "minimum": 0.05, "maximum": 8 },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "x": { "type": "number", "minimum": 0.05, "maximum": 8 },
-                "y": { "type": "number", "minimum": 0.05, "maximum": 8 },
-                "z": { "type": "number", "minimum": 0.05, "maximum": 8 }
-              }
-            }
+            { "$ref": "#/$defs/scale" }
           ]
         },
-        "hidden": { "type": "boolean" }
+        "pivot": { "$ref": "#/$defs/pivot" },
+        "hidden": { "type": "boolean" },
+        "locked": { "type": "boolean" }
+      }
+    },
+    "euler": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "x": { "type": "number", "minimum": -720, "maximum": 720 },
+        "y": { "type": "number", "minimum": -720, "maximum": 720 },
+        "z": { "type": "number", "minimum": -720, "maximum": 720 }
+      }
+    },
+    "scale": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "x": { "type": "number", "minimum": 0.05, "maximum": 8 },
+        "y": { "type": "number", "minimum": 0.05, "maximum": 8 },
+        "z": { "type": "number", "minimum": 0.05, "maximum": 8 }
+      }
+    },
+    "pivot": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Offset of the mesh inside the rotation pivot. Wider than position on Y so a prop can pivot above its feet.",
+      "properties": {
+        "x": { "type": "number", "minimum": -64, "maximum": 64 },
+        "y": { "type": "number", "minimum": -64, "maximum": 64 },
+        "z": { "type": "number", "minimum": -64, "maximum": 64 }
+      }
+    },
+    "propChannels": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "position": { "$ref": "#/$defs/vec3" },
+        "rotation": { "$ref": "#/$defs/euler" },
+        "scale": { "$ref": "#/$defs/scale" }
+      }
+    },
+    "propClip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["v", "duration", "loop", "autoKey", "keyframes"],
+      "properties": {
+        "v": { "const": 1 },
+        "duration": { "type": "number", "minimum": 0.2, "maximum": 30 },
+        "loop": { "type": "boolean" },
+        "autoKey": { "type": "boolean" },
+        "keyframes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["time", "values"],
+            "properties": {
+              "time": { "type": "number", "minimum": 0, "maximum": 30 },
+              "values": {
+                "type": "object",
+                "additionalProperties": { "$ref": "#/$defs/propChannels" }
+              }
+            }
+          }
+        }
       }
     },
     "text": {

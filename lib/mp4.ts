@@ -41,6 +41,7 @@ async function pickCodec(width: number, height: number, fps: number, bitrate: nu
  * the file comes out the same on a slow machine as on a fast one.
  */
 export async function captureMp4(host: CaptureHost, options: Mp4Options): Promise<Blob> {
+  if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
   if (!webCodecsSupported()) throw new Error(code("err.mp4Unsupported"));
   const { width, height, fps, bitrate, frames } = options;
   if (frames < 1) throw new Error(code("err.noFrames"));
@@ -73,6 +74,7 @@ export async function captureMp4(host: CaptureHost, options: Mp4Options): Promis
       frames,
       seconds: options.seconds,
       poster: options.poster,
+      signal: options.signal,
       onFrame: async (frameCanvas, index) => {
         if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         context.clearRect(0, 0, width, height);

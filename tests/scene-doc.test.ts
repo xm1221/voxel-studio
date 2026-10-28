@@ -4,6 +4,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { EXPORT_FORMAT_IDS } from "../lib/formats.ts";
 import { motionExportPlan, DEFAULT_MOTION_EXPORT, parseMotionExport } from "../lib/motion-export.ts";
 import { posterHasText, posterSubjectShift, POSTER_TEMPLATES, parsePosterText } from "../lib/poster.ts";
 import { SCENE_PACKS, applyScenePack, scenePackById } from "../lib/scene-packs.ts";
@@ -78,6 +79,8 @@ describe("scene documents", () => {
     }
     const packs = schema.$defs.stage.properties.pack.enum ?? [];
     assert.deepEqual(packs, SCENE_PACKS.map((pack) => pack.id));
+    const formats = schema.$defs.export.properties.format.enum ?? [];
+    assert.deepEqual(formats, [...EXPORT_FORMAT_IDS]);
     const templates = schema.$defs.text.properties.template.enum ?? [];
     assert.deepEqual(templates, POSTER_TEMPLATES.map((template) => template.id));
   });
@@ -110,6 +113,7 @@ describe("scene documents", () => {
     assert.equal(scene.props[0].catalogId, "item:diamond_sword");
     assert.equal(scene.props[0].scale.x, 2);
     // The pack sets the look, explicit stage fields win.
+    assert.equal(scene.pack, "promo-poster");
     assert.equal(scene.light, "hard");
     assert.equal(scene.outline, "sticker");
     assert.equal(scene.formatId, "story");
@@ -175,6 +179,7 @@ describe("scene documents", () => {
       [{ v: 2, cast: [{}], stage: { pack: "nope" } }, "err.scenePack"],
       [{ v: 2, cast: [{}], stage: { light: "disco" } }, "err.sceneStage"],
       [{ v: 2, cast: [{}], props: [{ item: "diamond" }] }, "err.sceneProp"],
+      [{ v: 2, cast: [{}], propClip: { v: 1 } }, "err.scenePropClip"],
       [{ v: 2, cast: [{}], camera: { position: [1, 2] } }, "err.sceneCamera"],
       [{ v: 2, cast: [{}], export: { format: "billboard" } }, "err.sceneFormat"],
       [{ v: 2, cast: [{}], extra: true }, "err.sceneUnknown"],
@@ -218,6 +223,79 @@ describe("scene documents", () => {
     assert.equal(again.keyIntensity, 1.3);
     assert.equal(again.formatId, "xhs");
   });
+
+  it("round-trips prop name, pivot, locked, propClip, pack, and stable ids", () => {
+    const propClip = {
+      v: 1 as const,
+      duration: 2,
+      loop: true,
+      autoKey: false,
+      keyframes: [
+        { time: 0, values: { o_sword: { position: { x: 1, y: 2, z: 3 }, rotation: { x: 0, y: 15, z: 0 } } } },
+        { time: 1, values: { o_sword: { position: { x: 4, y: 2, z: 3 } } } },
+      ],
+    };
+    const source = {
+      v: 2,
+      cast: [{ name: "Steve", skin: "steve", motion: "walk" }, { name: "Alex", skin: "alex" }],
+      stage: { pack: "hero-studio", light: "neon" },
+      props: [
+        {
+          item: "sword",
+          name: "  Blade  ",
+          position: { x: 4, y: 1, z: -2 },
+          rotation: { x: 10, y: 20, z: -5 },
+          scale: { x: 1, y: 2, z: 0.5 },
+          pivot: { x: 0, y: 8, z: 0 },
+          locked: true,
+        },
+      ],
+      propClip,
+    };
+    const first = mustParse(source);
+    const second = mustParse(source);
+    assert.equal(first.players[0].id, "p_1");
+    assert.equal(first.players[1].id, "p_2");
+    assert.equal(second.players[0].id, first.players[0].id);
+    assert.equal(first.props[0].id, "o_1");
+    assert.equal(second.props[0].id, "o_1");
+    assert.equal(first.props[0].catalogId, "item:diamond_sword");
+    assert.equal(first.props[0].name, "Blade");
+    assert.equal(first.props[0].pivot.y, 8);
+    assert.equal(first.props[0].locked, true);
+    assert.equal(first.props[0].rotation.y, 20);
+    assert.equal(first.props[0].scale.z, 0.5);
+    assert.equal(first.pack, "hero-studio");
+    assert.equal(first.light, "neon");
+    assert.equal(first.background, "studio");
+    assert.deepEqual(first.propClip, propClip);
+
+    const doc = toSceneDocument(first, { motion: DEFAULT_MOTION_EXPORT });
+    assert.equal(doc.stage?.pack, "hero-studio");
+    assert.equal(doc.props?.[0].name, "Blade");
+    assert.equal(doc.props?.[0].locked, true);
+    assert.equal(doc.props?.[0].pivot?.y, 8);
+    assert.equal(doc.props?.[0].id, "o_1");
+    assert.equal(doc.cast[0].id, "p_1");
+    const schema = JSON.parse(readFileSync(join(ROOT, "schema", "pixelstage.scene.schema.json"), "utf8")) as object;
+    const validate = new Ajv2020({ allErrors: true, strict: true }).compile(schema);
+    assert.equal(validate(doc), true, JSON.stringify(validate.errors?.slice(0, 4)));
+
+    const again = mustParse(doc);
+    assert.equal(again.players[0].id, "p_1");
+    assert.equal(again.players[1].id, "p_2");
+    assert.equal(again.props[0].id, "o_1");
+    assert.equal(again.props[0].name, "Blade");
+    assert.deepEqual(again.props[0].pivot, { x: 0, y: 8, z: 0 });
+    assert.equal(again.props[0].locked, true);
+    assert.equal(again.props[0].rotation.x, 10);
+    assert.equal(again.props[0].scale.y, 2);
+    assert.equal(again.pack, "hero-studio");
+    assert.equal(again.light, "neon");
+    assert.equal(again.background, "studio");
+    assert.equal(again.outline, "ink");
+    assert.deepEqual(again.propClip, propClip);
+  });
 });
 
 describe("scene packs", () => {
@@ -228,6 +306,7 @@ describe("scene packs", () => {
     if (!pack) return;
     const next = applyScenePack(scene, pack);
     assert.deepEqual(next.players, scene.players);
+    assert.equal(next.pack, "nether-cinema");
     assert.equal(next.background, pack.background);
     assert.equal(next.grade, pack.grade);
     assert.equal(next.outline, pack.outline);

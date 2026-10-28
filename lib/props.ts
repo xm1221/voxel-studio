@@ -102,22 +102,67 @@ function newPropId(used: Set<string>) {
   return id;
 }
 
-/** Drop unknown or broken props. Old share links simply have none. */
-export function parseSceneProps(value: unknown): SceneProp[] {
-  if (!Array.isArray(value)) return [];
+export type PropParseIssue = { path: string; message: string; code?: string };
+
+const PROP_ID = /^[a-zA-Z0-9_-]{1,24}$/;
+
+/**
+ * One prop reader for v1 share payloads and v2 scene documents.
+ * Share links (`strict: false`) drop broken entries and require an existing id.
+ * Scene documents (`strict: true`) report issues and assign `o_1`, `o_2`, …
+ * when an id is missing, so `getScene()` does not mint a new random id.
+ * Both paths read the same fields: catalog id or legacy `item`, name, pivot,
+ * locked, hidden, rotation (including legacy `rotationY`), and scale.
+ */
+export function parseSceneProps(
+  value: unknown,
+  options?: { strict?: boolean; onIssue?: (issue: PropParseIssue) => void },
+): SceneProp[] {
+  const strict = options?.strict === true;
+  const onIssue = options?.onIssue;
+  if (!Array.isArray(value)) {
+    if (strict && value !== undefined) {
+      onIssue?.({ path: "props", message: "props must be an array.", code: "err.sceneProps" });
+    }
+    return [];
+  }
   const props: SceneProp[] = [];
   const used = new Set<string>();
-  for (const entry of value) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+  const list = strict ? value.slice(0, MAX_PROPS) : value;
+  for (let index = 0; index < list.length; index += 1) {
+    if (!strict && props.length >= MAX_PROPS) break;
+    const entry = list[index];
+    const path = `props[${index}]`;
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      if (strict) onIssue?.({ path, message: "Each prop must be an object.", code: "err.sceneProps" });
+      continue;
+    }
     const record = entry as Record<string, unknown>;
-    const catalogId = normalizeCatalogId(record.catalogId);
-    if (!catalogId) continue;
-    if (typeof record.id !== "string" || !/^[a-zA-Z0-9_-]{1,24}$/.test(record.id) || used.has(record.id)) continue;
+    const rawId = record.catalogId ?? record.item;
+    const catalogId = normalizeCatalogId(rawId);
+    if (!catalogId) {
+      if (strict) {
+        onIssue?.({
+          path: `${path}.item`,
+          message: `Unknown prop "${String(rawId)}". Use a catalog id like block:stone.`,
+          code: "err.sceneProp",
+        });
+      }
+      continue;
+    }
+    const given = typeof record.id === "string" && PROP_ID.test(record.id) ? record.id : "";
+    let id = given;
+    if (strict) {
+      if (!id) id = `o_${props.length + 1}`;
+      while (used.has(id)) id = `${id}_`;
+    } else if (!id || used.has(id)) {
+      continue;
+    }
     const position = record.position;
     const point = position && typeof position === "object" && !Array.isArray(position) ? (position as Record<string, unknown>) : {};
-    used.add(record.id);
+    used.add(id);
     props.push({
-      id: record.id,
+      id,
       catalogId,
       name: typeof record.name === "string" ? record.name.trim().slice(0, 48) : "",
       position: {
@@ -131,7 +176,6 @@ export function parseSceneProps(value: unknown): SceneProp[] {
       hidden: record.hidden === true,
       locked: record.locked === true,
     });
-    if (props.length >= MAX_PROPS) break;
   }
   return props;
 }

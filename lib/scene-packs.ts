@@ -154,5 +154,5 @@ export function scenePackLook(pack: ScenePack, current?: Pick<SceneDraft, "backg
 }
 
 export function applyScenePack(scene: SceneDraft, pack: ScenePack): SceneDraft {
-  return { ...scene, ...scenePackLook(pack, scene) };
+  return { ...scene, ...scenePackLook(pack, scene), pack: pack.id };
 }

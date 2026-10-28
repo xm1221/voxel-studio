@@ -1,5 +1,6 @@
 import { CLIPS, animationDocument, parseAnimationDocument } from "./motion.ts";
 import type { PropClip } from "./prop-clip.ts";
+import { scenePackById } from "./scene-packs.ts";
 import type { AnimationDef, BackgroundFit, CameraSnapshot, ClipId, Joints, LayerMode, PlayerDraft, SceneDraft, SceneProp } from "./types";
 
 export function layerModeFrom(value: unknown): LayerMode {
@@ -41,6 +42,8 @@ export type SharePayload = {
   activePropId?: string | null;
   /** Prop transform track. Share links include keys, not custom texture bytes. */
   propClip?: PropClip | null;
+  /** Scene pack id. Local saves and share links keep it; v2 documents do too. */
+  pack?: string;
 };
 
 export type PlayerPayload = Omit<
@@ -122,6 +125,7 @@ export function toPayload(scene: SceneDraft, camera: CameraSnapshot | undefined,
     light: scene.light,
     keyIntensity: scene.keyIntensity,
     formatId: scene.formatId,
+    ...(scene.pack && scenePackById(scene.pack) ? { pack: scene.pack } : {}),
     camera,
     ...(scene.props.length
       ? {

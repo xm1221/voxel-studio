@@ -71,8 +71,10 @@ describe("reset to default", () => {
       formatId: "avatar",
       props: [],
       activePropId: null,
+      pack: "hero-studio",
     };
     const next = resetSceneLook(scene);
+    assert.equal(next.pack, null);
     assert.equal(next.background, "studio");
     assert.equal(next.backgroundImage, null);
     assert.equal(next.backgroundFit, "cover");

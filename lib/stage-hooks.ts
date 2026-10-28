@@ -1,10 +1,10 @@
 import { createAlexSkin, createSteveSkin } from "./defaults";
-import { exportPoster, mergeMotionExport, planMotion, resolveFormat } from "./exporters";
+import { exportPoster, planExport } from "./exporters";
 import { code } from "./i18n";
 import type { StudioEngine } from "./engine";
 import { DEFAULT_MOTION_EXPORT, type MotionExportOptions } from "./motion-export";
 import { parsePosterText, type PosterText } from "./poster";
-import type { FrameApiOptions, LoadSceneResult, MotionApiOptions, PixelstageHandlers } from "./render-api";
+import type { FrameApiOptions, LoadSceneResult, PixelstageHandlers } from "./render-api";
 import { loadAnyScene, parseSceneDocument, toSceneDocument } from "./scene-doc";
 import type { CameraSnapshot, SceneDraft } from "./types";
 
@@ -73,44 +73,17 @@ export function stageHandlers(ctx: StageContext): PixelstageHandlers {
   }
 
   async function frame(options: FrameApiOptions) {
-    const format = resolveFormat(scene(), options);
+    const plan = planExport(scene(), options, "png");
     const poster = exportPoster(ctx.getPoster(), options.text);
     const canvas = await ctx.engine.captureFrame({
-      width: format.width,
-      height: format.height,
-      round: options.round ?? format.round,
-      transparent: Boolean(options.transparent),
+      width: plan.width,
+      height: plan.height,
+      round: options.round ?? plan.round,
+      transparent: plan.transparent,
       poster,
       time: options.time ?? 0,
     });
-    return { dataUrl: canvasToDataUrl(canvas), mime: "image/png", width: format.width, height: format.height };
-  }
-
-  function motionOptions(options: MotionApiOptions) {
-    const base = ctx.getMotion();
-    const merged = mergeMotionExport(base, {
-      ...(options.fps === undefined ? {} : { fps: options.fps }),
-      ...(options.frames === undefined ? {} : { frames: options.frames }),
-      ...(options.bitrate === undefined ? {} : { mp4Bitrate: options.bitrate }),
-      ...(options.longEdge === undefined ? {} : { gifEdge: options.longEdge as MotionExportOptions["gifEdge"] }),
-    });
-    return merged;
-  }
-
-  function plan(options: MotionApiOptions, target: "gif" | "mp4") {
-    const current = scene();
-    let format = resolveFormat(current, options);
-    if (options.longEdge) {
-      const scale = Math.min(1, options.longEdge / Math.max(format.width, format.height));
-      format = {
-        ...format,
-        width: Math.max(2, Math.round((format.width * scale) / 2) * 2),
-        height: Math.max(2, Math.round((format.height * scale) / 2) * 2),
-      };
-    }
-    const settings = motionOptions(options);
-    const next = planMotion(current, format, settings, target);
-    return { format, settings, next };
+    return { dataUrl: canvasToDataUrl(canvas), mime: plan.mime, width: plan.width, height: plan.height };
   }
 
   return {
@@ -128,48 +101,51 @@ export function stageHandlers(ctx: StageContext): PixelstageHandlers {
     renderFrame: frame,
     exportPNG: frame,
     async exportGIF(options) {
-      const { format, settings, next } = plan(options, "gif");
+      const plan = planExport(scene(), { motion: ctx.getMotion(), ...options }, "gif");
       const poster = exportPoster(ctx.getPoster(), options.text);
       const blob = await ctx.engine.captureClip({
-        width: next.width,
-        height: next.height,
-        round: format.round && !options.transparent,
-        transparent: Boolean(options.transparent),
-        frames: next.frames,
-        seconds: options.seconds ?? next.seconds,
+        width: plan.width,
+        height: plan.height,
+        round: plan.round,
+        transparent: plan.transparent,
+        frames: plan.frames,
+        seconds: plan.seconds,
         poster,
+        signal: options.signal,
       });
       return {
         dataUrl: await blobToDataUrl(blob),
-        mime: "image/gif",
-        width: next.width,
-        height: next.height,
-        frames: next.frames,
-        fps: settings.fps,
-        seconds: options.seconds ?? next.seconds,
+        mime: plan.mime,
+        width: plan.width,
+        height: plan.height,
+        frames: plan.frames,
+        fps: plan.fps,
+        seconds: plan.seconds,
       };
     },
     async exportMP4(options) {
-      const { settings, next } = plan(options, "mp4");
+      const plan = planExport(scene(), { motion: ctx.getMotion(), ...options }, "mp4");
       const poster = exportPoster(ctx.getPoster(), options.text);
       const blob = await ctx.engine.captureMp4({
-        width: next.width,
-        height: next.height,
-        fps: next.fps,
-        frames: next.frames,
-        seconds: options.seconds ?? next.seconds,
-        bitrate: settings.mp4Bitrate,
+        width: plan.width,
+        height: plan.height,
+        fps: plan.fps,
+        frames: plan.frames,
+        seconds: plan.seconds,
+        bitrate: plan.bitrate,
         poster,
+        transparent: plan.transparent,
         onProgress: options.onProgress,
+        signal: options.signal,
       });
       return {
         dataUrl: await blobToDataUrl(blob),
-        mime: "video/mp4",
-        width: next.width,
-        height: next.height,
-        frames: next.frames,
-        fps: next.fps,
-        seconds: options.seconds ?? next.seconds,
+        mime: plan.mime,
+        width: plan.width,
+        height: plan.height,
+        frames: plan.frames,
+        fps: plan.fps,
+        seconds: plan.seconds,
       };
     },
     whenReady() {
