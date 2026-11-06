@@ -57,7 +57,10 @@ describe("vanilla entity catalog", () => {
   });
 
   it("has textures on disk when the client cache is present", function () {
-    if (!HAS_CACHE) this.skip();
+    if (!HAS_CACHE) {
+      this.skip();
+      return;
+    }
     for (const entity of ENTITIES) {
       assert.ok(existsSync(join(ASSETS, entity.texture)), entity.texture);
     }

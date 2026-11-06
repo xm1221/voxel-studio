@@ -8,7 +8,7 @@ import { EXPORT_FORMAT_IDS } from "../lib/formats.ts";
 import { motionExportPlan, DEFAULT_MOTION_EXPORT, parseMotionExport } from "../lib/motion-export.ts";
 import { posterHasText, posterSubjectShift, POSTER_TEMPLATES, parsePosterText } from "../lib/poster.ts";
 import { SCENE_PACKS, applyScenePack, scenePackById } from "../lib/scene-packs.ts";
-import { loadAnyScene, parseSceneDocument, parseSceneText, toSceneDocument } from "../lib/scene-doc.ts";
+import { loadAnyScene, parseSceneDocument, parseSceneText, toSceneDocument, POSE_IDS } from "../lib/scene-doc.ts";
 import type { SceneDraft } from "../lib/types.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -83,6 +83,8 @@ describe("scene documents", () => {
     assert.deepEqual(formats, [...EXPORT_FORMAT_IDS]);
     const templates = schema.$defs.text.properties.template.enum ?? [];
     assert.deepEqual(templates, POSTER_TEMPLATES.map((template) => template.id));
+    const poses = schema.$defs.poseId.enum ?? [];
+    assert.deepEqual(poses, [...POSE_IDS]);
   });
 
   it("loads a cast with pose, motion, props, stage, text, and export", () => {

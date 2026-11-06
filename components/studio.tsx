@@ -10,7 +10,7 @@ import { LOCALE_STORAGE_KEY, code, errorNote, htmlLang, note, parseNote, readLoc
 import { FORMATS } from "@/lib/formats";
 import { animationDocument, animationDownloadName, animationForClip, CLIPS, MAX_ANIMATION_TEXT_LENGTH, parseAnimationText } from "@/lib/motion";
 import { backgroundImageFrom, decodePayload, encodePayload, toPayload } from "@/lib/persist";
-import { POSES } from "@/lib/poses";
+import { POSES, mirrorJoints, type PoseCategory } from "@/lib/poses";
 import { PRESET_STORAGE_KEY, mergePresets, newPresetId, parsePresetDocument, presetDocument, type UserPreset } from "@/lib/presets";
 import { inferModelType, loadImage, loadSkinToCanvas } from "@/lib/skin-image";
 import { clearStoredPropTexturePack, loadStoredPropTexturePack, storePropTexturePack } from "@/lib/pack-store";
@@ -33,6 +33,8 @@ import { planExport, stageIsTransparent } from "@/lib/exporters";
 import { installPixelstage, registerPixelstage, unregisterPixelstage, type PixelstageHandlers } from "@/lib/render-api";
 import { stageHandlers } from "@/lib/stage-hooks";
 import type { CameraSnapshot, Joints, PlayerDraft, SceneDraft, SceneProp } from "@/lib/types";
+
+const FULL_BODY_CLIPS = new Set<string>(["walk", "run", "crouch", "attack", "fly", "swim", "spin", "jump", "sit"]);
 
 let builtinSkins: { steve: string; alex: string } | null = null;
 let bootCamera: CameraSnapshot | undefined;
@@ -128,6 +130,7 @@ export function Studio() {
     }
   });
   const [presetName, setPresetName] = useState("");
+  const [poseCategory, setPoseCategory] = useState<PoseCategory | "all">("all");
   const [keepLook, setKeepLook] = useState(false);
   const [presetJson, setPresetJson] = useState("");
   const [animationJson, setAnimationJson] = useState("");
@@ -557,6 +560,20 @@ export function Studio() {
     return poseLabel(locale, active.poseId, presets);
   }, [active, locale, presets]);
 
+  const activePose = useMemo(() => {
+    if (!active) return null;
+    return POSES.find((p) => p.id === active.poseId) ?? null;
+  }, [active?.poseId]);
+
+  function applyPose(poseId: string, joints: Joints) {
+    const shouldResetClip = active && FULL_BODY_CLIPS.has(active.clip);
+    updateActive({
+      poseId,
+      joints: { ...joints },
+      ...(shouldResetClip ? { clip: "idle" } : {}),
+    });
+  }
+
   function writePresets(next: UserPreset[]) {
     setPresets(next);
     try {
@@ -567,11 +584,21 @@ export function Studio() {
   }
 
   function applyUserPreset(preset: UserPreset) {
+    const shouldResetClip = active && FULL_BODY_CLIPS.has(active.clip);
     patch((current) => ({
       ...current,
       light: preset.look?.light ?? current.light,
       keyIntensity: preset.look?.keyIntensity ?? current.keyIntensity,
-      players: current.players.map((player) => (player.id === current.activeId ? { ...player, poseId: `user:${preset.id}`, joints: { ...preset.joints } } : player)),
+      players: current.players.map((player) =>
+        player.id === current.activeId
+          ? {
+              ...player,
+              poseId: `user:${preset.id}`,
+              joints: { ...preset.joints },
+              ...(shouldResetClip ? { clip: "idle" } : {}),
+            }
+          : player,
+      ),
     }));
     if (preset.camera) engineRef.current?.setCamera(preset.camera);
   }
@@ -1456,22 +1483,64 @@ export function Studio() {
               <section className="block" hidden={panel !== "cast"}>
                 <div className="section-head">
                   <h2>{tr("pose")}</h2>
-                  <button className="btn ghost" type="button" onClick={resetActivePlayer}>
-                    {tr("reset")}
-                  </button>
+                  <div className="row" style={{ gap: 6 }}>
+                    <button
+                      className="btn ghost"
+                      type="button"
+                      title={tr("mirrorPose")}
+                      onClick={() => {
+                        const shouldResetClip = active && FULL_BODY_CLIPS.has(active.clip);
+                        updateActive({
+                          poseId: "custom",
+                          joints: mirrorJoints(active.joints),
+                          ...(shouldResetClip ? { clip: "idle" } : {}),
+                        });
+                      }}
+                    >
+                      {tr("mirrorPose")}
+                    </button>
+                    <button className="btn ghost" type="button" onClick={resetActivePlayer}>
+                      {tr("reset")}
+                    </button>
+                  </div>
+                </div>
+                <div className="row" style={{ marginBottom: 8, gap: 4 }}>
+                  {(["all", "daily", "combat", "adventure", "poster"] as const).map((cat) => (
+                    <button
+                      key={cat}
+                      type="button"
+                      className={poseCategory === cat ? "chip active" : "chip"}
+                      onClick={() => setPoseCategory(cat)}
+                    >
+                      {ui(locale, `poseCat.${cat}`)}
+                    </button>
+                  ))}
                 </div>
                 <div className="poses">
-                  {POSES.map((pose) => (
+                  {POSES.filter((pose) => poseCategory === "all" || pose.category === poseCategory).map((pose) => (
                     <button
                       key={pose.id}
                       type="button"
                       className={active.poseId === pose.id ? "pose active" : "pose"}
-                      onClick={() => updateActive({ poseId: pose.id, joints: pose.joints })}
+                      title={pose.hint}
+                      onClick={() => applyPose(pose.id, pose.joints)}
                     >
                       {poseLabel(locale, pose.id, presets)}
                     </button>
                   ))}
                 </div>
+                {activePose?.recommendedClip && active.clip !== activePose.recommendedClip ? (
+                  <div className="row" style={{ marginTop: 8 }}>
+                    <button
+                      type="button"
+                      className="btn ghost"
+                      style={{ width: "100%", justifyContent: "center" }}
+                      onClick={() => updateActive({ clip: activePose.recommendedClip })}
+                    >
+                      ✨ {tr("applyRecommendedClip", { clip: ui(locale, `clip.${activePose.recommendedClip}`) })}
+                    </button>
+                  </div>
+                ) : null}
                 <div className="preset-tools">
                   <label className="field">
                     <span>{tr("saveAs")}</span>
@@ -1769,7 +1838,14 @@ export function Studio() {
                         max={slider.max}
                         value={active.joints[slider.key]}
                         aria-label={tr(slider.label)}
-                        onChange={(event) => updateActive({ poseId: "custom", joints: { ...active.joints, [slider.key]: Number(event.target.value) } })}
+                        onChange={(event) => {
+                          const shouldResetClip = active && FULL_BODY_CLIPS.has(active.clip);
+                          updateActive({
+                            poseId: "custom",
+                            joints: { ...active.joints, [slider.key]: Number(event.target.value) },
+                            ...(shouldResetClip ? { clip: "idle" } : {}),
+                          });
+                        }}
                       />
                       <strong>{Math.round(active.joints[slider.key])}°</strong>
                     </label>

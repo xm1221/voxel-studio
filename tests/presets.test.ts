@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { POSES } from "../lib/poses.ts";
+import { mirrorJoints, POSES, type PoseCategory } from "../lib/poses.ts";
+import { CLIPS } from "../lib/motion.ts";
 import { JOINT_LIMITS, mergePresets, parsePresetDocument, presetDocument } from "../lib/presets.ts";
 import type { Joints } from "../lib/types.ts";
 
@@ -54,3 +55,62 @@ describe("user presets", () => {
     assert.equal(full.ok, false);
   });
 });
+
+describe("built-in poses and mirror", () => {
+  it("has at least 20 categorized poses", () => {
+    assert.ok(POSES.length >= 20);
+    const categories: PoseCategory[] = ["daily", "combat", "adventure", "poster"];
+    for (const pose of POSES) {
+      assert.ok(categories.includes(pose.category), `${pose.id} has invalid category ${pose.category}`);
+      if (pose.recommendedClip) {
+        assert.ok(CLIPS.some((c) => c.id === pose.recommendedClip), `${pose.id} has invalid recommendedClip ${pose.recommendedClip}`);
+      }
+    }
+  });
+
+  it("mirrors joints symmetrically and stays within slider limits", () => {
+    for (const pose of POSES) {
+      const mirrored = mirrorJoints(pose.joints);
+      for (const key of Object.keys(JOINT_LIMITS) as (keyof Joints)[]) {
+        const value = mirrored[key];
+        const limit = JOINT_LIMITS[key];
+        assert.ok(value >= limit.min && value <= limit.max, `mirrored ${pose.id} ${key} (${value}) out of bounds`);
+      }
+      const doubleMirrored = mirrorJoints(mirrored);
+      assert.deepEqual(doubleMirrored, pose.joints, `double mirror did not restore ${pose.id}`);
+    }
+  });
+
+  it("mirrorJoints correctly swaps and negates specific joints", () => {
+    const testJoints: Joints = {
+      headX: 10,
+      headY: 20,
+      bodyX: 5,
+      rArmX: 30,
+      rArmZ: -40,
+      rElbow: -50,
+      lArmX: 15,
+      lArmZ: 25,
+      lElbow: -35,
+      rLegX: -20,
+      rKnee: 45,
+      lLegX: 10,
+      lKnee: 15,
+    };
+    const m = mirrorJoints(testJoints);
+    assert.equal(m.headX, 10);
+    assert.equal(m.headY, -20);
+    assert.equal(m.bodyX, 5);
+    assert.equal(m.rArmX, 15);
+    assert.equal(m.rArmZ, -25);
+    assert.equal(m.rElbow, -35);
+    assert.equal(m.lArmX, 30);
+    assert.equal(m.lArmZ, 40);
+    assert.equal(m.lElbow, -50);
+    assert.equal(m.rLegX, 10);
+    assert.equal(m.rKnee, 15);
+    assert.equal(m.lLegX, -20);
+    assert.equal(m.lKnee, 45);
+  });
+});
+

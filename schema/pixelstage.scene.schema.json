@@ -76,6 +76,37 @@
         "lKnee": { "type": "number", "minimum": -15, "maximum": 150 }
       }
     },
+    "poseId": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "wave",
+        "think",
+        "salute",
+        "sit",
+        "walk",
+        "guard",
+        "slash",
+        "bow",
+        "shield",
+        "charge",
+        "victory",
+        "sneak",
+        "torch",
+        "mine",
+        "eat",
+        "glide",
+        "hit",
+        "hero",
+        "flex",
+        "crossed",
+        "chill",
+        "peace",
+        "lookout",
+        "lookback",
+        "duo-back"
+      ]
+    },
     "preset": {
       "type": "string",
       "enum": [
@@ -170,7 +201,7 @@
         "model": { "type": "string", "enum": ["default", "slim"] },
         "pose": {
           "oneOf": [
-            { "type": "string", "enum": ["idle", "wave", "flex", "think", "salute", "sit", "hero", "walk"] },
+            { "$ref": "#/$defs/poseId" },
             { "$ref": "#/$defs/joints" }
           ]
         },
