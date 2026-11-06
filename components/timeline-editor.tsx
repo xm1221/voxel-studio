@@ -3,18 +3,23 @@
 import { useEffect, useRef, useState } from "react";
 import { t, type Locale, type MessageKey } from "@/lib/i18n";
 import { JOINT_LIMITS } from "@/lib/presets";
-import { sampleAnimation } from "@/lib/motion";
+import { animationForClip, sampleAnimation, EASES } from "@/lib/motion";
+import { POSES } from "@/lib/poses";
 import {
   addKeyframe,
   animationFromPose,
+  applyPosePresetToKeyframe,
   channelLimits,
   CURVE_CHANNELS,
+  duplicateKeyframe,
   followPose,
+  mirrorKeyframe,
   moveKeyframe,
   removeKeyframe,
   renameAnimation,
   setDuration,
   setLoop,
+  syncLoopEndpoints,
   waveStarter,
   writeEase,
   writeJoint,
@@ -24,8 +29,7 @@ import {
   type CurveChannel,
   type EditResult,
 } from "@/lib/timeline";
-import { EASES } from "@/lib/motion";
-import type { AnimationDef, EaseId, Joints } from "@/lib/types";
+import type { AnimationDef, BuiltinClipId, EaseId, Joints } from "@/lib/types";
 
 const JOINT_KEYS = Object.keys(JOINT_LIMITS) as (keyof Joints)[];
 
@@ -34,6 +38,7 @@ export function TimelineEditor({
   animation,
   rest,
   playerId,
+  activeClip,
   getPlayhead,
   onChange,
   onError,
@@ -45,6 +50,7 @@ export function TimelineEditor({
   animation: AnimationDef | null;
   rest: Joints;
   playerId: string;
+  activeClip?: BuiltinClipId;
   getPlayhead: () => number;
   onChange: (animation: AnimationDef) => void;
   onError: (error: string) => void;
@@ -56,6 +62,7 @@ export function TimelineEditor({
   const scrubbing = useRef(false);
   const [playhead, setPlayhead] = useState(0);
   const [held, setHeld] = useState<number | null>(null);
+  const [paused, setPaused] = useState(false);
   const [index, setIndex] = useState(0);
   const [channel, setChannel] = useState<CurveChannel>("rArmZ");
   const [seenPlayer, setSeenPlayer] = useState(playerId);
@@ -68,7 +75,7 @@ export function TimelineEditor({
   }
 
   useEffect(() => {
-    if (!animation) return;
+    if (!animation || paused) return;
     let frame = 0;
     const tick = () => {
       if (!scrubbing.current) setPlayhead(getPlayhead());
@@ -76,17 +83,26 @@ export function TimelineEditor({
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [animation, getPlayhead, playerId]);
+  }, [animation, getPlayhead, paused, playerId]);
 
   if (!animation) {
     return (
       <div className="timeline-empty">
         <p>{tr("timelineEmpty")}</p>
-        <div className="row">
-          <button className="btn primary" type="button" onClick={() => onCreate(waveStarter(tr("waveDraftName"), rest))}>
+        <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
+          {activeClip ? (
+            <button
+              className="btn primary"
+              type="button"
+              onClick={() => onCreate(animationForClip(activeClip))}
+            >
+              {tr("timelineExpandClip")}
+            </button>
+          ) : null}
+          <button className="btn" type="button" onClick={() => onCreate(waveStarter(tr("waveDraftName"), rest))}>
             {tr("timelineWave")}
           </button>
-          <button className="btn" type="button" onClick={() => onCreate(animationFromPose(tr("clipDraftName"), rest))}>
+          <button className="btn ghost" type="button" onClick={() => onCreate(animationFromPose(tr("clipDraftName"), rest))}>
             {tr("timelineFromPose")}
           </button>
         </div>
@@ -106,6 +122,43 @@ export function TimelineEditor({
     }
     setIndex(result.index);
     onChange(result.animation);
+    if (paused) {
+      const kf = result.animation.keyframes[result.index];
+      if (kf) {
+        setPlayhead(kf.time);
+        onScrub(kf.time);
+      }
+    }
+  }
+
+  function togglePlay() {
+    if (paused) {
+      setPaused(false);
+      onScrubEnd();
+    } else {
+      setPaused(true);
+      onScrub(playhead);
+    }
+  }
+
+  function prevKey() {
+    if (!animation) return;
+    const prev = Math.max(0, selected - 1);
+    const time = animation.keyframes[prev].time;
+    setIndex(prev);
+    setPlayhead(time);
+    setPaused(true);
+    onScrub(time);
+  }
+
+  function nextKey() {
+    if (!animation) return;
+    const next = Math.min(animation.keyframes.length - 1, selected + 1);
+    const time = animation.keyframes[next].time;
+    setIndex(next);
+    setPlayhead(time);
+    setPaused(true);
+    onScrub(time);
   }
 
   function timeAt(clientX: number) {
@@ -132,6 +185,29 @@ export function TimelineEditor({
 
   return (
     <div className="timeline">
+      <div className="row" style={{ alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <div className="row" style={{ gap: 6 }}>
+          <button className={paused ? "btn" : "btn primary"} type="button" onClick={togglePlay}>
+            {paused ? tr("timelinePlay") : tr("timelinePause")}
+          </button>
+          <button className="btn ghost" type="button" onClick={prevKey} disabled={selected <= 0} title={tr("timelinePrevKey")}>
+            {tr("timelinePrevKey")}
+          </button>
+          <button className="btn ghost" type="button" onClick={nextKey} disabled={selected >= animation.keyframes.length - 1} title={tr("timelineNextKey")}>
+            {tr("timelineNextKey")}
+          </button>
+        </div>
+        {activeClip ? (
+          <button
+            className="btn ghost"
+            type="button"
+            onClick={() => onCreate(animationForClip(activeClip))}
+            title={tr("timelineExpandClip")}
+          >
+            {tr("timelineExpandClip")}
+          </button>
+        ) : null}
+      </div>
       <div className="timeline-head">
         <label className="field">
           <span>{tr("timelineName")}</span>
@@ -175,6 +251,7 @@ export function TimelineEditor({
         onPointerDown={(event) => {
           if ((event.target as HTMLElement).closest(".key")) return;
           scrubbing.current = true;
+          setPaused(true);
           const time = pointerRatio(event.clientX);
           setPlayhead(time);
           onScrub(time);
@@ -189,7 +266,6 @@ export function TimelineEditor({
         onPointerUp={(event) => {
           if (!scrubbing.current) return;
           scrubbing.current = false;
-          onScrubEnd();
           if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
         }}
       >
@@ -209,6 +285,8 @@ export function TimelineEditor({
               setIndex(keyIndex);
               setHeld(keyIndex);
               scrubbing.current = true;
+              setPaused(true);
+              setPlayhead(key.time);
               onScrub(key.time);
               event.currentTarget.setPointerCapture(event.pointerId);
             }}
@@ -224,7 +302,6 @@ export function TimelineEditor({
             onPointerUp={(event) => {
               setHeld(null);
               scrubbing.current = false;
-              onScrubEnd();
               if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
             }}
           />
@@ -259,12 +336,21 @@ export function TimelineEditor({
         />
         <strong>{Math.round(frame.yaw ?? 0)}°</strong>
       </label>
-      <div className="row">
+      <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
         <button className="btn" type="button" onClick={() => apply(addKeyframe(animation, shownTime, rest))}>
           {tr("timelineAdd")}
         </button>
         <button className="btn ghost" type="button" onClick={() => apply(removeKeyframe(animation, selected))}>
           {tr("timelineDelete")}
+        </button>
+        <button className="btn ghost" type="button" onClick={() => apply(duplicateKeyframe(animation, selected))}>
+          {tr("timelineDuplicateKey")}
+        </button>
+        <button className="btn ghost" type="button" onClick={() => apply(mirrorKeyframe(animation, selected, rest))}>
+          {tr("timelineMirrorKey")}
+        </button>
+        <button className="btn ghost" type="button" onClick={() => apply(syncLoopEndpoints(animation))}>
+          {tr("timelineSyncLoop")}
         </button>
         <button className="btn ghost" type="button" onClick={() => apply(writePose(animation, selected, rest))}>
           {tr("timelineWrite")}
@@ -273,6 +359,28 @@ export function TimelineEditor({
           {tr("timelineFollow")}
         </button>
       </div>
+      <label className="field" style={{ marginTop: 8 }}>
+        <span>{tr("timelineApplyPose")}</span>
+        <select
+          value=""
+          aria-label={tr("timelineApplyPose")}
+          onChange={(event) => {
+            const poseId = event.target.value;
+            if (!poseId) return;
+            const targetPose = POSES.find((p) => p.id === poseId);
+            if (targetPose) {
+              apply(applyPosePresetToKeyframe(animation, selected, targetPose.joints));
+            }
+          }}
+        >
+          <option value="">{`-- ${tr("timelineApplyPose")} --`}</option>
+          {POSES.map((p) => (
+            <option key={p.id} value={p.id}>
+              {tr(`pose.${p.id}` as MessageKey)}
+            </option>
+          ))}
+        </select>
+      </label>
       <label className="field">
         <span>{tr("timelineChannel")}</span>
         <select value={channel} aria-label={tr("timelineChannel")} onChange={(event) => setChannel(event.target.value as CurveChannel)}>

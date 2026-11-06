@@ -447,7 +447,7 @@ export function applyJoints(
   joints: Joints,
   x: number,
   extra: { bob: number; sway: number; roll: number; cape: number; yaw?: number },
-  transform: Pick<PlayerDraft, "position" | "scale">,
+  transform: Pick<PlayerDraft, "position" | "scale"> & { yaw?: number },
 ) {
   rig.head.rotation.set(joints.headX * DEG, joints.headY * DEG, 0);
   rig.body.rotation.set(joints.bodyX * DEG, 0, 0);
@@ -460,7 +460,7 @@ export function applyJoints(
   rig.lHip.rotation.set(joints.lLegX * DEG, 0, 0);
   rig.lKnee.rotation.set(joints.lKnee * DEG, 0, 0);
   for (const bend of rig.bends) deformBend(bend.geometry, bend.pivotY, joints[bend.joint] * DEG);
-  rig.root.rotation.set(0, (extra.yaw ?? 0) * DEG, extra.roll * DEG);
+  rig.root.rotation.set(0, ((transform.yaw ?? 0) + (extra.yaw ?? 0)) * DEG, extra.roll * DEG);
   rig.root.position.set(
     x + extra.sway + transform.position.x,
     (isSitting(joints) ? SIT_DROP : 0) + extra.bob + transform.position.y,

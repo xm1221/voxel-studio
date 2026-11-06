@@ -1,6 +1,15 @@
 import type { Vec3 } from "./model-types.ts";
-import type { SceneProp } from "./types.ts";
+import type { PropAttachment, PropAttachSlot, SceneProp } from "./types.ts";
 import { normalizeCatalogId } from "./catalog.ts";
+
+export const PROP_ATTACH_SLOTS: ReadonlyArray<Exclude<PropAttachSlot, "world">> = ["rHand", "lHand", "head", "back"];
+
+export const ATTACH_SLOT_OFFSETS: Record<Exclude<PropAttachSlot, "world">, Vec3> = {
+  rHand: { x: 0, y: -5, z: 1.5 },
+  lHand: { x: 0, y: -5, z: 1.5 },
+  head: { x: 0, y: 8.5, z: 0 },
+  back: { x: 0, y: 1, z: -2.5 },
+};
 
 export const MAX_PROPS = 64;
 export const PROP_POSITION_LIMIT = 64;
@@ -160,6 +169,23 @@ export function parseSceneProps(
     }
     const position = record.position;
     const point = position && typeof position === "object" && !Array.isArray(position) ? (position as Record<string, unknown>) : {};
+    let attach: PropAttachment | null = null;
+    if (record.attach && typeof record.attach === "object" && !Array.isArray(record.attach)) {
+      const att = record.attach as Record<string, unknown>;
+      const slot = typeof att.slot === "string" && (PROP_ATTACH_SLOTS as readonly string[]).includes(att.slot)
+        ? (att.slot as Exclude<PropAttachSlot, "world">)
+        : null;
+      const playerId = typeof att.playerId === "string" && att.playerId.trim() ? att.playerId.trim() : "";
+      if (slot && playerId) {
+        attach = { playerId, slot };
+      } else if (strict) {
+        onIssue?.({
+          path: `${path}.attach`,
+          message: `Invalid attach: slot must be one of ${PROP_ATTACH_SLOTS.join(", ")} and playerId must be specified.`,
+          code: "err.scenePropAttach",
+        });
+      }
+    }
     used.add(id);
     props.push({
       id,
@@ -175,6 +201,7 @@ export function parseSceneProps(
       pivot: vec3From(record.pivot, -64, 64, 0),
       hidden: record.hidden === true,
       locked: record.locked === true,
+      attach,
     });
   }
   return props;
@@ -199,6 +226,7 @@ export function placeProp(catalogId: string, existing: SceneProp[]): SceneProp |
     pivot: { x: 0, y: 0, z: 0 },
     hidden: false,
     locked: false,
+    attach: null,
   };
 }
 
@@ -213,5 +241,6 @@ export function duplicateProp(prop: SceneProp, existing: SceneProp[]): SceneProp
     rotation: { ...prop.rotation },
     scale: { ...prop.scale },
     pivot: { ...prop.pivot },
+    attach: prop.attach ? { ...prop.attach } : null,
   };
 }

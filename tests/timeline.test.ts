@@ -5,11 +5,15 @@ import { poseById } from "../lib/poses.ts";
 import {
   addKeyframe,
   animationFromPose,
+  applyPosePresetToKeyframe,
+  channelValue,
+  duplicateKeyframe,
   followPose,
+  mirrorKeyframe,
   moveKeyframe,
   removeKeyframe,
-  channelValue,
   setDuration,
+  syncLoopEndpoints,
   waveStarter,
   writeEase,
   writeJoint,
@@ -134,5 +138,53 @@ describe("timeline ease and body turn", () => {
     if (!reset.ok) return;
     assert.equal("yaw" in reset.animation.keyframes[1], false);
     assert.equal(channelValue(reset.animation.keyframes[1], "yaw", rest), 0);
+  });
+});
+
+describe("timeline keyframe operations", () => {
+  it("duplicates a keyframe at an offset time", () => {
+    const wave = waveStarter("Wave", rest);
+    const duplicated = duplicateKeyframe(wave, 1);
+    assert.equal(duplicated.ok, true);
+    if (!duplicated.ok) return;
+    assert.equal(duplicated.animation.keyframes.length, wave.keyframes.length + 1);
+    assert.equal(parseAnimationDocument(duplicated.animation).ok, true);
+  });
+
+  it("mirrors a keyframe's joints and sway/roll/yaw", () => {
+    const wave = waveStarter("Wave", rest);
+    const turned = writeYaw(wave, 1, 45);
+    assert.equal(turned.ok, true);
+    if (!turned.ok) return;
+    const mirrored = mirrorKeyframe(turned.animation, 1, rest);
+    assert.equal(mirrored.ok, true);
+    if (!mirrored.ok) return;
+    assert.equal(mirrored.animation.keyframes[1].yaw, -45);
+    assert.equal(parseAnimationDocument(mirrored.animation).ok, true);
+  });
+
+  it("syncs loop endpoints from frame 0 to end duration", () => {
+    const wave = waveStarter("Wave", rest);
+    const modified = writeJoint(wave, 0, "rArmZ", -45);
+    assert.equal(modified.ok, true);
+    if (!modified.ok) return;
+    const synced = syncLoopEndpoints(modified.animation);
+    assert.equal(synced.ok, true);
+    if (!synced.ok) return;
+    const first = synced.animation.keyframes[0];
+    const last = synced.animation.keyframes[synced.animation.keyframes.length - 1];
+    assert.equal(last.time, synced.animation.duration);
+    assert.deepEqual(last.joints, first.joints);
+    assert.equal(parseAnimationDocument(synced.animation).ok, true);
+  });
+
+  it("applies preset pose to a keyframe", () => {
+    const wave = waveStarter("Wave", rest);
+    const swordPose = poseById("guard");
+    const applied = applyPosePresetToKeyframe(wave, 1, swordPose.joints);
+    assert.equal(applied.ok, true);
+    if (!applied.ok) return;
+    assert.equal(applied.animation.keyframes[1].joints.rArmX, swordPose.joints.rArmX);
+    assert.equal(parseAnimationDocument(applied.animation).ok, true);
   });
 });

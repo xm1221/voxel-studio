@@ -43,6 +43,8 @@ export type PlayerDraft = {
     z: number;
   };
   scale: number;
+  /** Turn of the character in degrees, -180 to 180. Defaults to 0. */
+  yaw?: number;
   nametag: string;
   bubble: string;
 };
@@ -98,6 +100,13 @@ export type AnimationDef = {
 
 export type PropKind = "block" | "item" | "entity";
 
+export type PropAttachSlot = "world" | "rHand" | "lHand" | "head" | "back";
+
+export type PropAttachment = {
+  playerId: string;
+  slot: Exclude<PropAttachSlot, "world">;
+};
+
 export type SceneProp = {
   id: string;
   catalogId: string;
@@ -127,6 +136,8 @@ export type SceneProp = {
   };
   hidden: boolean;
   locked: boolean;
+  /** Equipment slot attachment to a character's skeleton. null means world placement. */
+  attach?: PropAttachment | null;
 };
 
 export type SceneDraft = {

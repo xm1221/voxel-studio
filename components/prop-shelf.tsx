@@ -19,7 +19,7 @@ import { isMessageKey, t, type Locale, type MessageKey } from "@/lib/i18n";
 import { FACE_NAMES, type FaceName } from "@/lib/model-types";
 import type { PropClip } from "@/lib/prop-clip";
 import type { Space } from "@/lib/transform-math";
-import type { SceneProp } from "@/lib/types";
+import type { PropAttachSlot, SceneProp } from "@/lib/types";
 
 /** The picker passes `null` for "every category"; the catalog search calls that "all". */
 function pickerSearch(entries: CatalogEntry[], options: PickerSearchOptions): CatalogEntry[] {
@@ -38,6 +38,8 @@ export function PropShelf({
   props,
   activeId,
   selectedIds,
+  players,
+  activePlayerId,
   mode,
   space,
   snap,
@@ -75,6 +77,8 @@ export function PropShelf({
   props: SceneProp[];
   activeId: string | null;
   selectedIds: string[];
+  players?: Array<{ id: string; name: string }>;
+  activePlayerId?: string;
   mode: GizmoMode;
   space: Space;
   snap: boolean;
@@ -91,7 +95,15 @@ export function PropShelf({
   onToggleHidden: (id: string) => void;
   onToggleLocked: (id: string) => void;
   onDuplicate: (id: string) => void;
-  onTransform: (id: string, partial: { position?: Partial<SceneProp["position"]>; rotation?: Partial<SceneProp["rotation"]>; scale?: Partial<SceneProp["scale"]> }) => void;
+  onTransform: (
+    id: string,
+    partial: {
+      position?: Partial<SceneProp["position"]>;
+      rotation?: Partial<SceneProp["rotation"]>;
+      scale?: Partial<SceneProp["scale"]>;
+      attach?: SceneProp["attach"];
+    },
+  ) => void;
   onPivot: (id: string, axis: "x" | "y" | "z", value: number) => void;
   onEditStart: () => void;
   onEditEnd: () => void;
@@ -243,6 +255,68 @@ export function PropShelf({
               onChange={(event) => onRename(active.id, event.target.value)}
             />
           </label>
+          <div className="field" style={{ marginTop: 6 }}>
+            <span>{tr("propAttach")}</span>
+            <div className="row scene-chips" style={{ marginTop: 4, flexWrap: "wrap", gap: 4 }}>
+              {(
+                [
+                  { id: "world", labelKey: "slot.world" },
+                  { id: "rHand", labelKey: "slot.rHand" },
+                  { id: "lHand", labelKey: "slot.lHand" },
+                  { id: "head", labelKey: "slot.head" },
+                  { id: "back", labelKey: "slot.back" },
+                ] as const
+              ).map((slot) => {
+                const isSelected = (active.attach?.slot ?? "world") === slot.id;
+                return (
+                  <button
+                    key={slot.id}
+                    type="button"
+                    className={isSelected ? "chip active" : "chip"}
+                    onClick={() => {
+                      if (slot.id === "world") {
+                        onTransform(active.id, { attach: null, position: { x: 0, y: 0, z: 0 } });
+                      } else {
+                        const targetId = active.attach?.playerId ?? activePlayerId ?? players?.[0]?.id ?? "p_1";
+                        const defaults =
+                          slot.id === "rHand" || slot.id === "lHand"
+                            ? { position: { x: 0, y: 0, z: 0 }, rotation: { x: -30, y: 0, z: 0 }, scale: { x: 0.9, y: 0.9, z: 0.9 } }
+                            : slot.id === "head"
+                            ? { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 0.7, y: 0.7, z: 0.7 } }
+                            : { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 45 }, scale: { x: 0.9, y: 0.9, z: 0.9 } };
+                        onTransform(active.id, {
+                          attach: { playerId: targetId, slot: slot.id },
+                          ...defaults,
+                        });
+                      }
+                    }}
+                  >
+                    {tr(slot.labelKey)}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          {players && players.length > 1 && active.attach ? (
+            <label className="field" style={{ marginTop: 6 }}>
+              <span>{tr("propAttachTarget")}</span>
+              <select
+                value={active.attach.playerId}
+                onChange={(e) => {
+                  if (!active.attach) return;
+                  onTransform(active.id, {
+                    attach: { ...active.attach, playerId: e.target.value },
+                  });
+                }}
+              >
+                {players.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name || p.id}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <NumberAxes
             label={tr("propPos")}
             values={active.position}

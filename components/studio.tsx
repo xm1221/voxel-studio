@@ -5,9 +5,9 @@ import { PropShelf } from "@/components/prop-shelf";
 import { TimelineEditor } from "@/components/timeline-editor";
 import { catalogLabel, loadCatalog, subscribeCatalog } from "@/lib/catalog";
 import { createAlexSkin, createSteveSkin } from "@/lib/defaults";
-import { StudioEngine } from "@/lib/engine";
+import { StudioEngine, type MoveTarget } from "@/lib/engine";
 import { LOCALE_STORAGE_KEY, code, errorNote, htmlLang, note, parseNote, readLocale, t, type Locale, type MessageKey, type Note } from "@/lib/i18n";
-import { FORMATS } from "@/lib/formats";
+import { FORMATS, formatById } from "@/lib/formats";
 import { animationDocument, animationDownloadName, animationForClip, CLIPS, MAX_ANIMATION_TEXT_LENGTH, parseAnimationText } from "@/lib/motion";
 import { backgroundImageFrom, decodePayload, encodePayload, toPayload } from "@/lib/persist";
 import { POSES, mirrorJoints, type PoseCategory } from "@/lib/poses";
@@ -26,13 +26,23 @@ import { gizmoTransform, movePivot, type Space } from "@/lib/transform-math";
 import { readResourcePack, texturesFromFolder, type PackTexture } from "@/lib/resource-pack";
 import { STORAGE_KEY, defaultScene, makePlayer, requestPlayer, resetPlayer, resetSceneLook, sceneFromPayload } from "@/lib/studio-state";
 import { DEFAULT_MOTION_EXPORT, type MotionExportOptions } from "@/lib/motion-export";
-import { EMPTY_POSTER_TEXT, POSTER_TEMPLATES, posterHasText, type PosterText } from "@/lib/poster";
+import { EMPTY_POSTER_TEXT, POSTER_TEMPLATES, drawPosterText, posterHasText, posterSubjectShift, type PosterText } from "@/lib/poster";
 import { SCENE_PACKS, applyScenePack, type ScenePack } from "@/lib/scene-packs";
+import { STARTER_SCENES, applyStarterScene, type StarterScene } from "@/lib/starter-scenes";
 import { toSceneDocument } from "@/lib/scene-doc";
 import { planExport, stageIsTransparent } from "@/lib/exporters";
 import { installPixelstage, registerPixelstage, unregisterPixelstage, type PixelstageHandlers } from "@/lib/render-api";
 import { stageHandlers } from "@/lib/stage-hooks";
-import type { CameraSnapshot, Joints, PlayerDraft, SceneDraft, SceneProp } from "@/lib/types";
+import type { BuiltinClipId, CameraSnapshot, Joints, PlayerDraft, SceneDraft, SceneProp } from "@/lib/types";
+
+type SceneSnapshot = {
+  players: SceneDraft["players"];
+  activeId: string;
+  props: SceneDraft["props"];
+  activePropId: string | null;
+  propClip: SceneDraft["propClip"];
+  poster: PosterText | null;
+};
 
 const FULL_BODY_CLIPS = new Set<string>(["walk", "run", "crouch", "attack", "fly", "swim", "spin", "jump", "sit"]);
 
@@ -150,12 +160,16 @@ export function Studio() {
   const motionRef = useRef(motionExport);
   const [customs, setCustoms] = useState<CustomAsset[]>([]);
   const [historyCounts, setHistoryCounts] = useState({ undo: 0, redo: 0 });
-  const historyRef = useRef<Array<{ props: SceneDraft["props"]; propClip: SceneDraft["propClip"] }>>([]);
-  const futureRef = useRef<Array<{ props: SceneDraft["props"]; propClip: SceneDraft["propClip"] }>>([]);
+  const historyRef = useRef<SceneSnapshot[]>([]);
+  const futureRef = useRef<SceneSnapshot[]>([]);
   const selectionRef = useRef<string[]>([]);
   const gestureRef = useRef<SceneDraft["props"] | null>(null);
+  const gesturePlayerRef = useRef<PlayerDraft | null>(null);
   const livePropsRef = useRef<SceneDraft["props"] | null>(null);
   const panelRef = useRef<PanelId>("cast");
+  const [safeFrame, setSafeFrame] = useState(false);
+  const [viewSize, setViewSize] = useState({ width: 0, height: 0 });
+  const safeFrameCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const commandsRef = useRef<{
     undo: () => void;
     redo: () => void;
@@ -437,18 +451,22 @@ export function Studio() {
       setScene((current) => (current ? { ...current, activePropId: id } : current));
       setPanel("props");
     });
+    engine.setPlayerPickHandler((id) => {
+      setScene((current) => (current ? { ...current, activeId: id } : current));
+      setPanel("cast");
+    });
     engine.setGizmoHandler((event) => {
       const current = sceneRef.current;
       if (!current) return;
       if (event.phase === "start") {
-        historyRef.current.push({ props: structuredClone(current.props), propClip: current.propClip ? structuredClone(current.propClip) : null });
-        if (historyRef.current.length > 40) historyRef.current.shift();
-        futureRef.current = [];
-        setHistoryCounts({ undo: historyRef.current.length, redo: 0 });
+        rememberSnapshot();
         gestureRef.current = current.props.map(cloneProp);
+        const player = current.players.find((p) => p.id === current.activeId);
+        gesturePlayerRef.current = player ? structuredClone(player) : null;
         return;
       }
       if (event.phase === "end") {
+        gesturePlayerRef.current = null;
         const starts = gestureRef.current;
         const live = livePropsRef.current;
         gestureRef.current = null;
@@ -466,6 +484,37 @@ export function Studio() {
         setScene((scene) => (scene ? { ...scene, props: live, propClip: clip } : scene));
         return;
       }
+      if (panelRef.current === "cast") {
+        const startPlayer = gesturePlayerRef.current;
+        if (!startPlayer) return;
+        const startTransform = {
+          position: { ...startPlayer.position },
+          rotation: { x: 0, y: startPlayer.yaw ?? 0, z: 0 },
+          scale: { x: startPlayer.scale, y: startPlayer.scale, z: startPlayer.scale },
+        };
+        const transformed = gizmoTransform(startTransform, event);
+        let yaw = transformed.rotation.y % 360;
+        if (yaw > 180) yaw -= 360;
+        if (yaw < -180) yaw += 360;
+        const nextScale = Math.min(1.6, Math.max(0.5, Math.round(transformed.scale.x * 100) / 100));
+        setScene((scene) => {
+          if (!scene) return scene;
+          return {
+            ...scene,
+            players: scene.players.map((p) =>
+              p.id === startPlayer.id
+                ? {
+                    ...p,
+                    position: transformed.position,
+                    yaw: Math.round(yaw),
+                    scale: nextScale,
+                  }
+                : p,
+            ),
+          };
+        });
+        return;
+      }
       const starts = gestureRef.current;
       if (!starts) return;
       const selected = new Set(selectionRef.current.length ? selectionRef.current : current.activePropId ? [current.activePropId] : []);
@@ -481,6 +530,7 @@ export function Studio() {
     });
     return () => {
       engine.setPickHandler(null);
+      engine.setPlayerPickHandler(null);
       engine.setGizmoHandler(null);
     };
   }, []);
@@ -489,7 +539,6 @@ export function Studio() {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
-      if (panelRef.current !== "props") return;
       const key = event.key.toLowerCase();
       const meta = event.ctrlKey || event.metaKey;
       if (meta && key === "z") {
@@ -503,16 +552,18 @@ export function Studio() {
         commandsRef.current.redo();
         return;
       }
-      if (meta && key === "d") {
-        event.preventDefault();
-        const id = sceneRef.current?.activePropId;
-        if (id) commandsRef.current.duplicate(id);
-        return;
-      }
-      if (event.key === "Delete" || event.key === "Backspace") {
-        const id = sceneRef.current?.activePropId;
-        if (id) commandsRef.current.remove(id);
-        return;
+      if (panelRef.current === "props") {
+        if (meta && key === "d") {
+          event.preventDefault();
+          const id = sceneRef.current?.activePropId;
+          if (id) commandsRef.current.duplicate(id);
+          return;
+        }
+        if (event.key === "Delete" || event.key === "Backspace") {
+          const id = sceneRef.current?.activePropId;
+          if (id) commandsRef.current.remove(id);
+          return;
+        }
       }
       if (key === "v" || key === "g") setGizmoMode("move");
       if (key === "r") setGizmoMode("rotate");
@@ -537,14 +588,77 @@ export function Studio() {
   useEffect(() => {
     const engine = engineRef.current;
     if (!engine || !scene) return;
-    const current = scene.props.find((prop) => prop.id === scene.activePropId);
+    const currentProp = scene.props.find((prop) => prop.id === scene.activePropId);
+    let target: MoveTarget | null = null;
+    let enabled = false;
+    if (panel === "props" && currentProp && !currentProp.hidden && !currentProp.locked) {
+      target = { kind: "prop", id: currentProp.id };
+      enabled = true;
+    } else if (panel === "cast" && scene.activeId) {
+      target = { kind: "player", id: scene.activeId };
+      enabled = true;
+    }
     engine.setGizmoOptions({
       mode: gizmoMode,
       space: gizmoSpace,
       snap: gizmoSnap,
-      enabled: panel === "props" && Boolean(current && !current.hidden && !current.locked),
+      enabled,
+      target,
     });
   }, [gizmoMode, gizmoSnap, gizmoSpace, panel, scene]);
+
+  useEffect(() => {
+    const el = viewRef.current;
+    if (!el) return;
+    const updateSize = () => {
+      setViewSize({ width: el.clientWidth, height: el.clientHeight });
+    };
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const currentFormat = scene ? formatById(scene.formatId) : FORMATS[3];
+  const formatAspect = (currentFormat.width || 16) / (currentFormat.height || 9);
+  let safeBoxW = viewSize.width;
+  let safeBoxH = viewSize.height;
+  if (viewSize.width > 0 && viewSize.height > 0) {
+    if (viewSize.width / viewSize.height > formatAspect) {
+      safeBoxH = viewSize.height;
+      safeBoxW = viewSize.height * formatAspect;
+    } else {
+      safeBoxW = viewSize.width;
+      safeBoxH = viewSize.width / formatAspect;
+    }
+  }
+
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!engine) return;
+    const shift = (safeFrame || posterHasText(poster) || panel === "scene")
+      ? posterSubjectShift(poster, currentFormat.width, currentFormat.height) * 0.022
+      : 0;
+    engine.setPosterSubjectShift(shift);
+  }, [poster, currentFormat, safeFrame, panel]);
+
+  useEffect(() => {
+    const canvas = safeFrameCanvasRef.current;
+    if (!canvas || safeBoxW <= 0 || safeBoxH <= 0) return;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(safeBoxW * dpr);
+    canvas.height = Math.round(safeBoxH * dpr);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (posterHasText(poster)) {
+      drawPosterText(ctx, poster, {
+        width: canvas.width,
+        height: canvas.height,
+        pixelRatio: dpr,
+      });
+    }
+  }, [poster, safeBoxW, safeBoxH, safeFrame, panel]);
 
   useEffect(() => {
     if (!message && !error) return;
@@ -780,32 +894,77 @@ export function Studio() {
     setHistoryCounts({ undo: historyRef.current.length, redo: futureRef.current.length });
   }
 
-  function rememberProps() {
+  function rememberSnapshot() {
     const current = sceneRef.current;
     if (!current) return;
-    historyRef.current.push({ props: structuredClone(current.props), propClip: current.propClip ? structuredClone(current.propClip) : null });
+    historyRef.current.push({
+      players: structuredClone(current.players),
+      activeId: current.activeId,
+      props: structuredClone(current.props),
+      activePropId: current.activePropId,
+      propClip: current.propClip ? structuredClone(current.propClip) : null,
+      poster: posterRef.current ? structuredClone(posterRef.current) : null,
+    });
     if (historyRef.current.length > 40) historyRef.current.shift();
     futureRef.current = [];
     publishHistory();
   }
 
-  function undoProps() {
+  function undoSnapshot() {
     const current = sceneRef.current;
     const prev = historyRef.current.pop();
     if (!current || !prev) return;
-    futureRef.current.push({ props: current.props, propClip: current.propClip ?? null });
-    setScene({ ...current, props: prev.props, propClip: prev.propClip ?? null });
+    futureRef.current.push({
+      players: structuredClone(current.players),
+      activeId: current.activeId,
+      props: structuredClone(current.props),
+      activePropId: current.activePropId,
+      propClip: current.propClip ? structuredClone(current.propClip) : null,
+      poster: posterRef.current ? structuredClone(posterRef.current) : null,
+    });
+    setScene({
+      ...current,
+      players: prev.players,
+      activeId: prev.activeId,
+      props: prev.props,
+      activePropId: prev.activePropId,
+      propClip: prev.propClip ?? null,
+    });
+    if (prev.poster) {
+      setPoster(prev.poster);
+    }
     publishHistory();
   }
 
-  function redoProps() {
+  function redoSnapshot() {
     const current = sceneRef.current;
     const next = futureRef.current.pop();
     if (!current || !next) return;
-    historyRef.current.push({ props: current.props, propClip: current.propClip ?? null });
-    setScene({ ...current, props: next.props, propClip: next.propClip ?? null });
+    historyRef.current.push({
+      players: structuredClone(current.players),
+      activeId: current.activeId,
+      props: structuredClone(current.props),
+      activePropId: current.activePropId,
+      propClip: current.propClip ? structuredClone(current.propClip) : null,
+      poster: posterRef.current ? structuredClone(posterRef.current) : null,
+    });
+    setScene({
+      ...current,
+      players: next.players,
+      activeId: next.activeId,
+      props: next.props,
+      activePropId: next.activePropId,
+      propClip: next.propClip ?? null,
+    });
+    if (next.poster) {
+      setPoster(next.poster);
+    }
     publishHistory();
   }
+
+  const rememberProps = rememberSnapshot;
+  const undoProps = undoSnapshot;
+  const redoProps = redoSnapshot;
 
   function addProp(catalogId: string) {
     const current = sceneRef.current;
@@ -855,7 +1014,15 @@ export function Studio() {
     commandsRef.current = { undo: undoProps, redo: redoProps, duplicate: duplicateSelected, remove: removeSelected };
   });
 
-  function transformProp(id: string, partial: { position?: Partial<SceneProp["position"]>; rotation?: Partial<SceneProp["rotation"]>; scale?: Partial<SceneProp["scale"]> }) {
+  function transformProp(
+    id: string,
+    partial: {
+      position?: Partial<SceneProp["position"]>;
+      rotation?: Partial<SceneProp["rotation"]>;
+      scale?: Partial<SceneProp["scale"]>;
+      attach?: SceneProp["attach"];
+    },
+  ) {
     patch((scene) => ({
       ...scene,
       props: scene.props.map((prop) =>
@@ -865,6 +1032,7 @@ export function Studio() {
               position: clampPosition({ ...prop.position, ...partial.position }),
               rotation: clampRotation({ ...prop.rotation, ...partial.rotation }),
               scale: clampScale({ ...prop.scale, ...partial.scale }),
+              attach: partial.attach !== undefined ? partial.attach : prop.attach,
             }
           : prop,
       ),
@@ -1020,8 +1188,10 @@ export function Studio() {
             }
           : player,
       );
+      const offsets = [0, 16, -16, 32];
       for (const extra of loaded.slice(1)) {
         if (players.length >= 4) break;
+        extra.position = { ...extra.position, x: offsets[players.length] ?? players.length * 16 };
         players.push(extra);
       }
       return { ...current, players, activeId: current.activeId };
@@ -1130,6 +1300,16 @@ export function Studio() {
     patch((current) => applyScenePack(current, pack));
     engineRef.current?.setCamera(pack.camera);
     setMessage(note("scenePackApplied", { name: ui(locale, `pack.${pack.id}`) }));
+  }
+
+  function applyStarter(template: StarterScene) {
+    if (!scene) return;
+    rememberProps();
+    const result = applyStarterScene(scene, template);
+    patch(() => result.scene);
+    setPoster(result.poster);
+    engineRef.current?.setCamera(result.camera);
+    setMessage(note("scenePackApplied", { name: ui(locale, `starter.${template.id}`) }));
   }
 
   async function share() {
@@ -1248,9 +1428,34 @@ export function Studio() {
           }}
         >
           {error ? <div className="toast error">{t(locale, error.key, error.vars)}</div> : message ? <div className="toast">{t(locale, message.key, message.vars)}</div> : null}
+          {(safeFrame || posterHasText(poster) || panel === "scene") && viewSize.width > 0 && viewSize.height > 0 ? (
+            <div className="safe-frame-container">
+              <div
+                className="safe-frame-box"
+                style={{
+                  width: `${safeBoxW}px`,
+                  height: `${safeBoxH}px`,
+                }}
+              >
+                <canvas
+                  ref={safeFrameCanvasRef}
+                  className="safe-frame-canvas"
+                />
+              </div>
+            </div>
+          ) : null}
           <div className="hud">
             <span>{moveMode && panel !== "props" ? tr("dragPlayer") : tr("orbit")}</span>
             <span>{tr("pinch")}</span>
+            <button
+              className={safeFrame ? "chip active" : "chip"}
+              type="button"
+              style={{ pointerEvents: "auto", minHeight: "auto", padding: "4px 8px" }}
+              onClick={() => setSafeFrame((v) => !v)}
+              title={tr("safeFrameHint")}
+            >
+              {tr("safeFrame")}
+            </button>
           </div>
         </div>
         <button
@@ -1317,7 +1522,21 @@ export function Studio() {
                     {tr("resetScene")}
                   </button>
                 </div>
-                <p className="hint scene-hint">{scene.backgroundImage ? tr("sceneHintOn") : tr("sceneHintOff")}</p>
+                <h2>{tr("starterScenes")}</h2>
+                <p className="hint">{tr("starterScenesHint")}</p>
+                <div className="poses scene-packs" style={{ marginBottom: 16 }}>
+                  {STARTER_SCENES.map((template) => (
+                    <button
+                      key={template.id}
+                      type="button"
+                      className="pose"
+                      title={ui(locale, `starterHint.${template.id}`)}
+                      onClick={() => applyStarter(template)}
+                    >
+                      {ui(locale, `starter.${template.id}`)}
+                    </button>
+                  ))}
+                </div>
                 <h2>{tr("scenePacks")}</h2>
                 <p className="hint">{tr("scenePacksHint")}</p>
                 <div className="poses scene-packs">
@@ -1415,7 +1634,15 @@ export function Studio() {
                       const skins = ensureSkins();
                       if (!skins) return;
                       patch((current) => {
-                        const player = makePlayer({ name: "Steve", skinUrl: skins.steve, model: "default" });
+                        const offsets = [0, 16, -16, 32];
+                        const count = current.players.length;
+                        const initialX = offsets[count] ?? count * 16;
+                        const player = makePlayer({
+                          name: count % 2 === 1 ? "Alex" : "Steve",
+                          skinUrl: count % 2 === 1 ? skins.alex : skins.steve,
+                          model: count % 2 === 1 ? "slim" : "default",
+                        });
+                        player.position = { ...player.position, x: initialX };
                         return { ...current, players: [...current.players, player], activeId: player.id };
                       });
                     }}
@@ -1444,7 +1671,7 @@ export function Studio() {
                   <button className={moveMode ? "chip active" : "chip"} type="button" onClick={() => setMoveMode((value) => !value)}>
                     {moveMode ? tr("moving") : tr("move")}
                   </button>
-                  <button className="btn ghost" type="button" onClick={() => updateActive({ position: { x: 0, y: 0, z: 0 }, scale: 1 })}>
+                  <button className="btn ghost" type="button" onClick={() => updateActive({ position: { x: 0, y: 0, z: 0 }, yaw: 0, scale: 1 })}>
                     {tr("recenter")}
                   </button>
                 </div>
@@ -1464,6 +1691,19 @@ export function Studio() {
                       <strong>{active.position[key].toFixed(1)}</strong>
                     </label>
                   ))}
+                  <label className="slider">
+                    <span>{tr("yaw")}</span>
+                    <input
+                      type="range"
+                      min={-180}
+                      max={180}
+                      step={1}
+                      value={active.yaw ?? 0}
+                      aria-label={tr("yaw")}
+                      onChange={(event) => updateActive({ yaw: Number(event.target.value) })}
+                    />
+                    <strong>{(active.yaw ?? 0).toFixed(0)}°</strong>
+                  </label>
                   <label className="slider">
                     <span>{tr("scale")}</span>
                     <input
@@ -1669,9 +1909,21 @@ export function Studio() {
                 {active.clip !== "custom" && active.customAnimation ? (
                   <div className="timeline-empty">
                     <p>{tr("timelinePaused")}</p>
-                    <button className="btn primary" type="button" onClick={() => updateActive({ clip: "custom" })}>
-                      {tr("timelineResume")}
-                    </button>
+                    <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
+                      <button className="btn primary" type="button" onClick={() => updateActive({ clip: "custom" })}>
+                        {tr("timelineResume")}
+                      </button>
+                      <button
+                        className="btn"
+                        type="button"
+                        onClick={() => {
+                          const expanded = animationForClip(active.clip as BuiltinClipId);
+                          updateActive({ clip: "custom", customAnimation: expanded });
+                        }}
+                      >
+                        {tr("timelineExpandClip")}
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <TimelineEditor
@@ -1679,6 +1931,7 @@ export function Studio() {
                     animation={active.clip === "custom" ? active.customAnimation : null}
                     rest={active.joints}
                     playerId={active.id}
+                    activeClip={active.clip !== "custom" ? active.clip : undefined}
                     getPlayhead={readPlayhead}
                     onChange={(animation) => updateActive({ clip: "custom", customAnimation: animation })}
                     onCreate={(animation) => {
@@ -1743,6 +1996,8 @@ export function Studio() {
                   props={scene.props}
                   activeId={scene.activePropId}
                   selectedIds={selection}
+                  players={scene.players}
+                  activePlayerId={scene.activeId}
                   mode={gizmoMode}
                   space={gizmoSpace}
                   snap={gizmoSnap}

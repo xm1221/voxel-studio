@@ -1,10 +1,13 @@
 import {
   CanvasTexture,
+  Euler,
   Group,
+  Matrix4,
   Mesh,
   NearestFilter,
   PCFSoftShadowMap,
   PerspectiveCamera,
+  Quaternion,
   Raycaster,
   Scene,
   SRGBColorSpace,
@@ -29,6 +32,7 @@ import { customAsset } from "./custom-assets.ts";
 import { TransformGizmo, type GizmoMode } from "./gizmo.ts";
 import { samplePropClip } from "./prop-clip.ts";
 import { createPropGroup, propSignature } from "./prop-mesh.ts";
+import { ATTACH_SLOT_OFFSETS } from "./props.ts";
 import { closestLineT, rayPlane, signedAngle, snapActive, type Axis, type Space } from "./transform-math.ts";
 import type { Vec3 } from "./model-types.ts";
 import { applyStage, createStage } from "./stage";
@@ -78,6 +82,19 @@ type ClipSampleState = {
   ready: boolean;
 };
 
+function getRigAttachmentBone(rig: Rig, slot: "rHand" | "lHand" | "head" | "back"): Object3D {
+  switch (slot) {
+    case "rHand":
+      return rig.rElbow;
+    case "lHand":
+      return rig.lElbow;
+    case "head":
+      return rig.head;
+    case "back":
+      return rig.body;
+  }
+}
+
 export class StudioEngine {
   readonly renderer: WebGLRenderer;
   readonly scene = new Scene();
@@ -107,6 +124,8 @@ export class StudioEngine {
   private gizmoSpace: Space = "local";
   private gizmoHandler: ((event: GizmoPhase) => void) | null = null;
   private pickHandler: ((id: string, shift: boolean) => void) | null = null;
+  private playerPickHandler: ((id: string) => void) | null = null;
+  private gizmoTarget: MoveTarget | null = null;
   private markersHidden = false;
   private gizmoDrag: {
     pointerId: number;
@@ -256,6 +275,15 @@ export class StudioEngine {
     return null;
   }
 
+  private playerIdFrom(object: Object3D | null) {
+    let current = object;
+    while (current && current !== this.holder) {
+      if (typeof current.userData?.playerId === "string") return current.userData.playerId as string;
+      current = current.parent;
+    }
+    return null;
+  }
+
   private beginGizmo(event: PointerEvent, kind: "translate" | "plane" | "rotate" | "scale", axis: Axis | "xy" | "xz" | "yz" | "all") {
     const ray = this.pointerRay(event);
     const originV = this.gizmo.root.position;
@@ -304,6 +332,14 @@ export class StudioEngine {
       event.preventDefault();
       event.stopImmediatePropagation();
       this.pickHandler(propId, event.shiftKey);
+      return;
+    }
+    const playerHit = this.raycaster.intersectObject(this.holder, true).find((hit) => this.drawn(hit.object) && this.playerIdFrom(hit.object));
+    const playerId = playerHit ? this.playerIdFrom(playerHit.object) : null;
+    if (playerId && this.playerPickHandler) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.playerPickHandler(playerId);
       return;
     }
     if (!this.moveTarget) return;
@@ -459,6 +495,7 @@ export class StudioEngine {
         }
         rig = buildRig(player.model, this.gradient);
         rig.id = player.id;
+        rig.root.userData.playerId = player.id;
         this.holder.add(rig.root);
         this.rigs.set(player.id, rig);
       }
@@ -525,30 +562,94 @@ export class StudioEngine {
       const position = shown?.position ?? prop.position;
       const rotation = shown?.rotation ?? prop.rotation;
       const scale = shown?.scale ?? prop.scale;
-      group.position.set(position.x, FOOT_Y + position.y, position.z);
-      group.rotation.set((rotation.x * Math.PI) / 180, (rotation.y * Math.PI) / 180, (rotation.z * Math.PI) / 180);
-      group.scale.set(scale.x, scale.y, scale.z);
+      if (!prop.attach) {
+        group.matrixAutoUpdate = true;
+        group.position.set(position.x, FOOT_Y + position.y, position.z);
+        group.rotation.set((rotation.x * Math.PI) / 180, (rotation.y * Math.PI) / 180, (rotation.z * Math.PI) / 180);
+        group.scale.set(scale.x, scale.y, scale.z);
+      }
       group.visible = !prop.hidden;
       const visual = group.getObjectByName("visual");
       if (visual) visual.position.set(-prop.pivot.x, -prop.pivot.y, -prop.pivot.z);
       const marker = group.getObjectByName("marker");
       if (marker) marker.visible = !this.markersHidden && !prop.hidden && prop.id === draft.activePropId;
     }
+    this.holder.updateMatrixWorld(true);
+    this.updateAttachedProps(draft);
     this.positionGizmo(draft);
   }
 
+  private updateAttachedProps(draft: SceneDraft) {
+    const samples = this.propSamples(draft);
+    for (const prop of draft.props) {
+      if (!prop.attach) continue;
+      const group = this.propGroups.get(prop.id);
+      if (!group) continue;
+      const rig = this.rigs.get(prop.attach.playerId);
+      if (!rig) continue;
+      const bone = getRigAttachmentBone(rig, prop.attach.slot);
+      const slotOffset = ATTACH_SLOT_OFFSETS[prop.attach.slot];
+      const shown = samples[prop.id];
+      const position = shown?.position ?? prop.position;
+      const rotation = shown?.rotation ?? prop.rotation;
+      const scale = shown?.scale ?? prop.scale;
+
+      const localPos = new Vector3(slotOffset.x + position.x, slotOffset.y + position.y, slotOffset.z + position.z);
+      const localEuler = new Euler(
+        (rotation.x * Math.PI) / 180,
+        (rotation.y * Math.PI) / 180,
+        (rotation.z * Math.PI) / 180,
+        "XYZ",
+      );
+      const localQuat = new Quaternion().setFromEuler(localEuler);
+      const localScale = new Vector3(scale.x, scale.y, scale.z);
+      const localMatrix = new Matrix4().compose(localPos, localQuat, localScale);
+
+      group.matrixAutoUpdate = false;
+      group.matrix.multiplyMatrices(bone.matrixWorld, localMatrix);
+      group.matrixWorld.copy(group.matrix);
+      group.matrix.decompose(group.position, group.quaternion, group.scale);
+    }
+  }
+
   private positionGizmo(draft: SceneDraft) {
-    const prop = draft.props.find((item) => item.id === draft.activePropId);
+    if (!this.gizmoEnabled) {
+      this.gizmo.setVisible(false);
+      return;
+    }
+    const target = this.gizmoTarget ?? (draft.activePropId ? { kind: "prop" as const, id: draft.activePropId } : null);
+    if (!target) {
+      this.gizmo.setVisible(false);
+      return;
+    }
+    if (target.kind === "player") {
+      const rig = this.rigs.get(target.id);
+      if (!rig) {
+        this.gizmo.setVisible(false);
+        return;
+      }
+      this.gizmo.setVisible(true);
+      rig.root.updateWorldMatrix(true, false);
+      const world = new Vector3();
+      const quat = new Quaternion();
+      rig.root.getWorldPosition(world);
+      rig.root.getWorldQuaternion(quat);
+      this.gizmo.place(world, quat, this.gizmoSpace);
+      return;
+    }
+    const prop = draft.props.find((item) => item.id === target.id);
     const group = prop ? this.propGroups.get(prop.id) : undefined;
-    if (!prop || !group || prop.hidden || prop.locked || !this.gizmoEnabled) {
+    if (!prop || !group || prop.hidden || prop.locked) {
       this.gizmo.setVisible(false);
       return;
     }
     this.gizmo.setVisible(true);
     group.updateWorldMatrix(true, false);
     const world = new Vector3();
+    const quat = new Quaternion();
     group.getWorldPosition(world);
-    this.gizmo.place(world, group.quaternion, this.gizmoSpace);
+    group.getWorldQuaternion(quat);
+    this.gizmo.place(world, quat, this.gizmoSpace);
   }
 
   /** Drop prop meshes so the next sync rebuilds them with the current textures. */
@@ -608,9 +709,14 @@ export class StudioEngine {
           shown.yaw += turn * follow;
         }
       }
-      const x = (index - (draft.players.length - 1) / 2) * 22;
+      const x = 0;
       applyJoints(rig, shown.joints, x, shown, player);
     });
+    this.holder.updateMatrixWorld(true);
+    this.updateAttachedProps(draft);
+    if (this.gizmoTarget?.kind === "player" || draft.props.some((p) => p.id === draft.activePropId && p.attach)) {
+      this.positionGizmo(draft);
+    }
   }
 
   private applyLabels(rig: Rig, nametag: string, bubble: string) {
@@ -751,12 +857,28 @@ export class StudioEngine {
     }
   }
 
-  setGizmoOptions(options: { mode: GizmoMode; space: Space; snap: boolean; enabled: boolean }) {
+  setPosterSubjectShift(shift: number) {
+    this.holder.position.x = shift;
+  }
+
+  setGizmoOptions(options: { mode: GizmoMode; space: Space; snap: boolean; enabled: boolean; target?: MoveTarget | null }) {
     this.gizmoSnap = options.snap;
     this.gizmoSpace = options.space;
     this.gizmoEnabled = options.enabled;
+    if (options.target !== undefined) {
+      this.gizmoTarget = options.target;
+    }
     this.gizmo.setMode(options.mode);
     if (this.draft) this.positionGizmo(this.draft);
+  }
+
+  setGizmoTarget(target: MoveTarget | null) {
+    this.gizmoTarget = target;
+    if (this.draft) this.positionGizmo(this.draft);
+  }
+
+  setPlayerPickHandler(handler: ((id: string) => void) | null) {
+    this.playerPickHandler = handler;
   }
 
   setGizmoHandler(handler: ((event: GizmoPhase) => void) | null) {

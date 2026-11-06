@@ -60,6 +60,7 @@ export type SceneDocCast = {
     | AnimationDef;
   position?: { x?: number; y?: number; z?: number };
   scale?: number;
+  yaw?: number;
   nametag?: string;
   bubble?: string;
   outer?: boolean;
@@ -98,6 +99,10 @@ export type SceneDocProp = {
   pivot?: { x?: number; y?: number; z?: number };
   hidden?: boolean;
   locked?: boolean;
+  attach?: {
+    playerId: string;
+    slot: "rHand" | "lHand" | "head" | "back";
+  } | null;
 };
 
 export type SceneDocument = {
@@ -357,6 +362,7 @@ function parseCast(value: unknown, index: number, steve: string, alex: string, e
     layerMode: value.layers === "voxel" ? "voxel" : "flat",
     position: vec(value.position),
     scale: num(value.scale, 0.5, 1.6, 1),
+    yaw: num(value.yaw, -180, 180, 0),
     nametag: typeof value.nametag === "string" ? value.nametag.slice(0, 32) : "",
     bubble: typeof value.bubble === "string" ? value.bubble.slice(0, 64) : "",
   });
@@ -595,6 +601,7 @@ export function toSceneDocument(
       pose: player.poseId.startsWith("user:") ? { ...player.joints } : player.poseId,
       position: { ...player.position },
       scale: player.scale,
+      ...(player.yaw !== undefined && player.yaw !== 0 ? { yaw: player.yaw } : {}),
       outer: player.showOuter,
       layers: player.layerMode,
       showCape: player.showCape,
@@ -634,6 +641,7 @@ export function toSceneDocument(
       ...(prop.pivot.x !== 0 || prop.pivot.y !== 0 || prop.pivot.z !== 0 ? { pivot: { ...prop.pivot } } : {}),
       ...(prop.hidden ? { hidden: true } : {}),
       ...(prop.locked ? { locked: true } : {}),
+      ...(prop.attach ? { attach: { ...prop.attach } } : {}),
     })),
     ...(scene.propClip ? { propClip: structuredClone(scene.propClip) } : {}),
     ...(options.poster ? { text: options.poster } : {}),

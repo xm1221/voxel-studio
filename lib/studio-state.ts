@@ -32,6 +32,7 @@ export function makePlayer(partial: Partial<PlayerDraft> & Pick<PlayerDraft, "na
     layerMode: "flat",
     position: { x: 0, y: 0, z: 0 },
     scale: 1,
+    yaw: 0,
     nametag: "",
     bubble: "",
     ...partial,
@@ -90,6 +91,7 @@ export function sceneFromPayload(payload: SharePayload, steve: string, alex: str
         z: positionPart(player.position?.z, 0, -32, 32),
       },
       scale: numberInRange(player.scale, 0.5, 1.6, 1),
+      yaw: typeof player.yaw === "number" ? numberInRange(player.yaw, -180, 180, 0) : 0,
       nametag: player.nametag || "",
       bubble: player.bubble || "",
     } satisfies PlayerDraft;

@@ -1,5 +1,6 @@
 import { code } from "./i18n.ts";
 import { isEaseId, parseAnimationDocument } from "./motion.ts";
+import { mirrorJoints } from "./poses.ts";
 import { JOINT_LIMITS } from "./presets.ts";
 import type { AnimationDef, AnimationKeyframe, EaseId, Joints } from "./types";
 
@@ -236,6 +237,91 @@ export function followPose(animation: AnimationDef, index: number): EditResult {
   if (index < 0 || index >= animation.keyframes.length) return { ok: false, error: code("err.animFrames") };
   const next = clone(animation);
   next.keyframes[index].joints = {};
+  return finish(next, index);
+}
+
+export function duplicateKeyframe(animation: AnimationDef, index: number): EditResult {
+  if (index < 0 || index >= animation.keyframes.length) return { ok: false, error: code("err.animFrames") };
+  if (animation.keyframes.length >= MAX_FRAMES) return { ok: false, error: code("err.animFrames") };
+  const next = clone(animation);
+  const source = next.keyframes[index];
+  let targetTime = roundTime(Math.min(next.duration, source.time + 0.2));
+  if (targetTime === source.time && source.time > 0.2) {
+    targetTime = roundTime(source.time - 0.2);
+  }
+  const copy: AnimationKeyframe = {
+    time: targetTime,
+    joints: { ...source.joints },
+    bob: source.bob,
+    sway: source.sway,
+    roll: source.roll,
+    cape: source.cape,
+    ...(source.ease ? { ease: source.ease } : {}),
+    ...(source.yaw ? { yaw: source.yaw } : {}),
+  };
+  next.keyframes.push(copy);
+  next.keyframes.sort((a, b) => a.time - b.time);
+  const newIndex = next.keyframes.indexOf(copy);
+  return finish(next, newIndex);
+}
+
+export function mirrorKeyframe(animation: AnimationDef, index: number, rest: Joints): EditResult {
+  if (index < 0 || index >= animation.keyframes.length) return { ok: false, error: code("err.animFrames") };
+  const next = clone(animation);
+  const frame = next.keyframes[index];
+  const fullJoints: Joints = {
+    headX: frame.joints.headX ?? rest.headX,
+    headY: frame.joints.headY ?? rest.headY,
+    bodyX: frame.joints.bodyX ?? rest.bodyX,
+    rArmX: frame.joints.rArmX ?? rest.rArmX,
+    rArmZ: frame.joints.rArmZ ?? rest.rArmZ,
+    rElbow: frame.joints.rElbow ?? rest.rElbow,
+    lArmX: frame.joints.lArmX ?? rest.lArmX,
+    lArmZ: frame.joints.lArmZ ?? rest.lArmZ,
+    lElbow: frame.joints.lElbow ?? rest.lElbow,
+    rLegX: frame.joints.rLegX ?? rest.rLegX,
+    rKnee: frame.joints.rKnee ?? rest.rKnee,
+    lLegX: frame.joints.lLegX ?? rest.lLegX,
+    lKnee: frame.joints.lKnee ?? rest.lKnee,
+  };
+  const mirrored = mirrorJoints(fullJoints);
+  frame.joints = poseJoints(mirrored);
+  frame.sway = -frame.sway;
+  frame.roll = -frame.roll;
+  if (frame.yaw) frame.yaw = -frame.yaw;
+  return finish(next, index);
+}
+
+export function syncLoopEndpoints(animation: AnimationDef): EditResult {
+  if (animation.keyframes.length === 0) return { ok: false, error: code("err.animFrames") };
+  const next = clone(animation);
+  const first = next.keyframes[0];
+  const existingEndIndex = next.keyframes.findIndex((k) => Math.abs(k.time - next.duration) < 0.01);
+  const endFrame: AnimationKeyframe = {
+    time: next.duration,
+    joints: { ...first.joints },
+    bob: first.bob,
+    sway: first.sway,
+    roll: first.roll,
+    cape: first.cape,
+    ...(first.ease ? { ease: first.ease } : {}),
+    ...(first.yaw ? { yaw: first.yaw } : {}),
+  };
+  if (existingEndIndex >= 0) {
+    next.keyframes[existingEndIndex] = endFrame;
+    return finish(next, existingEndIndex);
+  } else {
+    next.keyframes.push(endFrame);
+    next.keyframes.sort((a, b) => a.time - b.time);
+    const newIndex = next.keyframes.indexOf(endFrame);
+    return finish(next, newIndex);
+  }
+}
+
+export function applyPosePresetToKeyframe(animation: AnimationDef, index: number, joints: Joints): EditResult {
+  if (index < 0 || index >= animation.keyframes.length) return { ok: false, error: code("err.animFrames") };
+  const next = clone(animation);
+  next.keyframes[index].joints = poseJoints(joints);
   return finish(next, index);
 }
 

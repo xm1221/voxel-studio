@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { decodePayload, encodePayload, toPayload } from "../lib/persist.ts";
 import { MAX_PROPS, parseSceneProps, placeProp, propSlot, type PropParseIssue } from "../lib/props.ts";
 import { poseById } from "../lib/poses.ts";
+import { applyStarterScene, STARTER_SCENES } from "../lib/starter-scenes.ts";
 import { sceneFromPayload } from "../lib/studio-state.ts";
 import type { SceneDraft } from "../lib/types.ts";
 
@@ -193,5 +194,41 @@ describe("scene props", () => {
     assert.equal(next.scene.props[0].scale.z, 0.5);
     assert.equal(next.scene.props[0].pivot.y, 8);
     assert.equal(next.scene.props[0].name, "Stone");
+  });
+
+  it("parses and round-trips prop attachments to player bones", () => {
+    const placed = placeProp("item:diamond_sword", []);
+    assert.ok(placed);
+    if (!placed) return;
+    placed.attach = { playerId: "p_test", slot: "rHand" };
+    const draft = scene();
+    draft.props = [placed];
+    const payload = toPayload(draft, undefined, false);
+    assert.deepEqual(payload.props?.[0].attach, { playerId: "p_test", slot: "rHand" });
+    const decoded = decodePayload(encodePayload(payload));
+    assert.ok(decoded);
+    const next = sceneFromPayload(decoded, "steve", "alex");
+    assert.equal(next.scene.props[0].attach?.slot, "rHand");
+    assert.equal(next.scene.props[0].attach?.playerId, "p_test");
+  });
+
+  it("applies starter scenes while preserving character identity", () => {
+    assert.equal(STARTER_SCENES.length, 4);
+    const draft = scene();
+    draft.players[0].name = "CustomHero";
+    draft.players[0].model = "slim";
+    draft.players[0].skinUrl = "https://custom.skin/hero.png";
+    const wilderness = STARTER_SCENES.find((s: any) => s.id === "wilderness-hero");
+    assert.ok(wilderness);
+    const result = applyStarterScene(draft, wilderness);
+    assert.equal(result.scene.players[0].name, "CustomHero");
+    assert.equal(result.scene.players[0].model, "slim");
+    assert.equal(result.scene.players[0].skinUrl, "https://custom.skin/hero.png");
+    assert.equal(result.scene.players[0].poseId, "guard");
+    assert.equal(result.scene.props.length, 3);
+    assert.equal(result.scene.props[0].attach?.playerId, "p_test");
+    assert.equal(result.scene.props[0].attach?.slot, "rHand");
+    assert.equal(result.scene.background, "noon");
+    assert.equal(result.poster.title, "WILDERNESS HERO");
   });
 });

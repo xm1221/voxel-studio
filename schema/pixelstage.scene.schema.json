@@ -208,6 +208,7 @@
         "motion": { "$ref": "#/$defs/motion" },
         "position": { "$ref": "#/$defs/vec3" },
         "scale": { "type": "number", "minimum": 0.5, "maximum": 1.6 },
+        "yaw": { "type": "number", "minimum": -180, "maximum": 180 },
         "nametag": { "type": "string", "maxLength": 32 },
         "bubble": { "type": "string", "maxLength": 64 },
         "outer": { "type": "boolean", "description": "Show the outer skin layer." },
@@ -276,7 +277,16 @@
         },
         "pivot": { "$ref": "#/$defs/pivot" },
         "hidden": { "type": "boolean" },
-        "locked": { "type": "boolean" }
+        "locked": { "type": "boolean" },
+        "attach": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "playerId": { "type": "string" },
+            "slot": { "type": "string", "enum": ["rHand", "lHand", "head", "back"] }
+          },
+          "required": ["playerId", "slot"]
+        }
       }
     },
     "euler": {
