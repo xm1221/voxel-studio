@@ -3,23 +3,23 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { PropPicker, type PickerSearchOptions } from "@/components/prop-picker";
 import {
-  LEGACY_IDS,
-  catalogEntry,
+  catalogEntries,
   catalogLabel,
   catalogTextureUrl,
   loadedCatalog,
   loadCatalog,
+  resolveCatalogEntry,
   searchCatalog,
   subscribeCatalog,
   type CatalogEntry,
 } from "@/lib/catalog";
 import { customFromPng, parseCustomFile, type CustomAsset } from "@/lib/custom-import";
 import type { GizmoMode } from "@/lib/gizmo";
-import { isMessageKey, t, type Locale, type MessageKey } from "@/lib/i18n";
+import { t, type Locale, type MessageKey } from "@/lib/i18n";
 import { FACE_NAMES, type FaceName } from "@/lib/model-types";
 import type { PropClip } from "@/lib/prop-clip";
 import type { Space } from "@/lib/transform-math";
-import type { PropAttachSlot, SceneProp } from "@/lib/types";
+import type { SceneProp } from "@/lib/types";
 
 /** The picker passes `null` for "every category"; the catalog search calls that "all". */
 function pickerSearch(entries: CatalogEntry[], options: PickerSearchOptions): CatalogEntry[] {
@@ -123,6 +123,7 @@ export function PropShelf({
   const tr = (key: MessageKey, vars?: Record<string, string | number>) => t(locale, key, vars);
   const active = props.find((prop) => prop.id === activeId) ?? null;
   const [catalog, setCatalog] = useState(() => loadedCatalog());
+  const [catalogSettled, setCatalogSettled] = useState(() => Boolean(loadedCatalog()));
   const [faces, setFaces] = useState<Partial<Record<FaceName, string>>>({});
   const zipRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
@@ -138,13 +139,21 @@ export function PropShelf({
     folderRef.current?.setAttribute("directory", "");
   }, []);
   useEffect(() => {
-    if (catalog) return;
+    if (catalog) {
+      setCatalogSettled(true);
+      return;
+    }
     let cancel = false;
     void loadCatalog()
       .then((next) => {
-        if (!cancel) setCatalog(next);
+        if (!cancel) {
+          setCatalog(next);
+          setCatalogSettled(true);
+        }
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (!cancel) setCatalogSettled(true);
+      });
     return () => {
       cancel = true;
     };
@@ -154,7 +163,7 @@ export function PropShelf({
     setCatalog(loadedCatalog());
   }, [catalogTick]);
 
-  const entries = useMemo(() => catalog?.entries ?? [], [catalog]);
+  const entries = useMemo(() => catalog?.entries ?? catalogEntries(), [catalog]);
 
   async function readPng(file: File, nextKind: "item" | "block") {
     try {
@@ -212,7 +221,7 @@ export function PropShelf({
         <div className="outliner">
           {props.map((prop) => {
             const label = prop.name || catalogLabel(prop.catalogId, locale);
-            const entry = catalogEntry(prop.catalogId);
+            const entry = resolveCatalogEntry(prop.catalogId);
             const selected = selectedIds.includes(prop.id);
             return (
               <div key={prop.id} className={prop.id === activeId ? "outliner-row active" : selected ? "outliner-row picked" : "outliner-row"}>
@@ -274,21 +283,24 @@ export function PropShelf({
                     type="button"
                     className={isSelected ? "chip active" : "chip"}
                     onClick={() => {
+                      onEditStart();
                       if (slot.id === "world") {
-                        onTransform(active.id, { attach: null, position: { x: 0, y: 0, z: 0 } });
+                        onTransform(active.id, {
+                          attach: null,
+                          position: { x: 12, y: 0, z: 8 },
+                          rotation: { x: 0, y: 0, z: 0 },
+                          scale: { x: 1, y: 1, z: 1 },
+                        });
                       } else {
                         const targetId = active.attach?.playerId ?? activePlayerId ?? players?.[0]?.id ?? "p_1";
-                        const defaults =
-                          slot.id === "rHand" || slot.id === "lHand"
-                            ? { position: { x: 0, y: 0, z: 0 }, rotation: { x: -30, y: 0, z: 0 }, scale: { x: 0.9, y: 0.9, z: 0.9 } }
-                            : slot.id === "head"
-                            ? { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 0 }, scale: { x: 0.7, y: 0.7, z: 0.7 } }
-                            : { position: { x: 0, y: 0, z: 0 }, rotation: { x: 0, y: 0, z: 45 }, scale: { x: 0.9, y: 0.9, z: 0.9 } };
                         onTransform(active.id, {
                           attach: { playerId: targetId, slot: slot.id },
-                          ...defaults,
+                          position: { x: 0, y: 0, z: 0 },
+                          rotation: { x: 0, y: 0, z: 0 },
+                          scale: { x: 1, y: 1, z: 1 },
                         });
                       }
+                      onEditEnd();
                     }}
                   >
                     {tr(slot.labelKey)}
@@ -304,9 +316,11 @@ export function PropShelf({
                 value={active.attach.playerId}
                 onChange={(e) => {
                   if (!active.attach) return;
+                  onEditStart();
                   onTransform(active.id, {
                     attach: { ...active.attach, playerId: e.target.value },
                   });
+                  onEditEnd();
                 }}
               >
                 {players.map((p) => (
@@ -353,7 +367,7 @@ export function PropShelf({
       ) : null}
 
       <h2 style={{ marginTop: 16 }}>{tr("library")}</h2>
-      <PropPicker entries={entries} loading={!catalog} locale={locale} tr={tr} textureUrl={catalogTextureUrl} onAdd={onAdd} search={pickerSearch} />
+      <PropPicker entries={entries} loading={!catalog && !catalogSettled} locale={locale} tr={tr} textureUrl={catalogTextureUrl} onAdd={onAdd} search={pickerSearch} />
 
       <h2 style={{ marginTop: 16 }}>{tr("customBb")}</h2>
       <p className="hint scene-hint">{tr("customHint")}</p>

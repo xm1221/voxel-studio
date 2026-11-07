@@ -27,18 +27,18 @@ import { applyJoints, buildRig, configureTexture, type Rig } from "./rig/build";
 import { voxelPieces, type VoxelParent } from "./rig/layers";
 import { applyLook } from "./rig/look";
 import { applyLights, createLights } from "./lighting";
-import { catalogEntry } from "./catalog.ts";
+import { resolveCatalogEntry } from "./catalog.ts";
 import { customAsset } from "./custom-assets.ts";
 import { TransformGizmo, type GizmoMode } from "./gizmo.ts";
 import { samplePropClip } from "./prop-clip.ts";
 import { createPropGroup, propSignature } from "./prop-mesh.ts";
-import { ATTACH_SLOT_OFFSETS } from "./props.ts";
+import { getPropDisplayTransform } from "./props.ts";
 import { closestLineT, rayPlane, signedAngle, snapActive, type Axis, type Space } from "./transform-math.ts";
 import type { Vec3 } from "./model-types.ts";
 import { applyStage, createStage } from "./stage";
 import { loadImage, loadSkinToCanvas } from "./skin-image";
 import { FOOT_Y } from "./rig/layout";
-import type { CameraSnapshot, Joints, SceneDraft } from "./types";
+import type { CameraSnapshot, Joints, PropAttachment, SceneDraft } from "./types";
 
 export type MoveTarget = { kind: "player" | "prop"; id: string };
 
@@ -327,15 +327,22 @@ export class StudioEngine {
       }
     }
     const propHit = this.raycaster.intersectObject(this.propRoot, true).find((hit) => this.drawn(hit.object) && this.propIdFrom(hit.object));
+    const playerHit = this.raycaster.intersectObject(this.holder, true).find((hit) => this.drawn(hit.object) && this.playerIdFrom(hit.object));
     const propId = propHit ? this.propIdFrom(propHit.object) : null;
+    const playerId = playerHit ? this.playerIdFrom(playerHit.object) : null;
+    const preferPlayer = Boolean(playerId && (!propHit || (playerHit && playerHit.distance < propHit.distance)));
+    if (preferPlayer && playerId && this.playerPickHandler) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.playerPickHandler(playerId);
+      return;
+    }
     if (propId && this.pickHandler) {
       event.preventDefault();
       event.stopImmediatePropagation();
       this.pickHandler(propId, event.shiftKey);
       return;
     }
-    const playerHit = this.raycaster.intersectObject(this.holder, true).find((hit) => this.drawn(hit.object) && this.playerIdFrom(hit.object));
-    const playerId = playerHit ? this.playerIdFrom(playerHit.object) : null;
     if (playerId && this.playerPickHandler) {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -546,8 +553,8 @@ export class StudioEngine {
       let group = this.propGroups.get(prop.id);
       if (!group || group.userData.catalogId !== prop.catalogId || group.userData.signature !== propSignature(prop.catalogId)) {
         // The catalog loads asynchronously; unknown ids simply wait or never render.
-        // Custom assets live beside the catalog and can render before it arrives.
-        if (!catalogEntry(prop.catalogId) && !customAsset(prop.catalogId)) continue;
+        // Custom assets and bundled fallback entries can render immediately.
+        if (!resolveCatalogEntry(prop.catalogId) && !customAsset(prop.catalogId)) continue;
         if (group) {
           this.propRoot.remove(group);
           disposePropGroup(group);
@@ -570,9 +577,22 @@ export class StudioEngine {
       }
       group.visible = !prop.hidden;
       const visual = group.getObjectByName("visual");
-      if (visual) visual.position.set(-prop.pivot.x, -prop.pivot.y, -prop.pivot.z);
+      if (visual) {
+        if (prop.attach) {
+          const display = getPropDisplayTransform(prop.catalogId, prop.attach.slot);
+          visual.position.set(
+            -prop.pivot.x - display.modelOrigin.x,
+            -prop.pivot.y - display.modelOrigin.y,
+            -prop.pivot.z - display.modelOrigin.z,
+          );
+        } else {
+          visual.position.set(-prop.pivot.x, -prop.pivot.y, -prop.pivot.z);
+        }
+      }
       const marker = group.getObjectByName("marker");
-      if (marker) marker.visible = !this.markersHidden && !prop.hidden && prop.id === draft.activePropId;
+      if (marker) {
+        marker.visible = !this.markersHidden && !prop.hidden && !prop.attach && prop.id === draft.activePropId;
+      }
     }
     this.holder.updateMatrixWorld(true);
     this.updateAttachedProps(draft);
@@ -588,21 +608,39 @@ export class StudioEngine {
       const rig = this.rigs.get(prop.attach.playerId);
       if (!rig) continue;
       const bone = getRigAttachmentBone(rig, prop.attach.slot);
-      const slotOffset = ATTACH_SLOT_OFFSETS[prop.attach.slot];
+      const display = getPropDisplayTransform(prop.catalogId, prop.attach.slot);
       const shown = samples[prop.id];
       const position = shown?.position ?? prop.position;
       const rotation = shown?.rotation ?? prop.rotation;
       const scale = shown?.scale ?? prop.scale;
 
-      const localPos = new Vector3(slotOffset.x + position.x, slotOffset.y + position.y, slotOffset.z + position.z);
-      const localEuler = new Euler(
-        (rotation.x * Math.PI) / 180,
-        (rotation.y * Math.PI) / 180,
-        (rotation.z * Math.PI) / 180,
-        "XYZ",
+      const localPos = new Vector3(
+        display.position.x + position.x,
+        display.position.y + position.y,
+        display.position.z + position.z,
       );
-      const localQuat = new Quaternion().setFromEuler(localEuler);
-      const localScale = new Vector3(scale.x, scale.y, scale.z);
+      const baseQuat = new Quaternion().setFromEuler(
+        new Euler(
+          (display.rotation.x * Math.PI) / 180,
+          (display.rotation.y * Math.PI) / 180,
+          (display.rotation.z * Math.PI) / 180,
+          "XYZ",
+        ),
+      );
+      const userQuat = new Quaternion().setFromEuler(
+        new Euler(
+          (rotation.x * Math.PI) / 180,
+          (rotation.y * Math.PI) / 180,
+          (rotation.z * Math.PI) / 180,
+          "XYZ",
+        ),
+      );
+      const localQuat = userQuat.multiply(baseQuat);
+      const localScale = new Vector3(
+        display.scale * scale.x,
+        display.scale * scale.y,
+        display.scale * scale.z,
+      );
       const localMatrix = new Matrix4().compose(localPos, localQuat, localScale);
 
       group.matrixAutoUpdate = false;
@@ -859,6 +897,35 @@ export class StudioEngine {
 
   setPosterSubjectShift(shift: number) {
     this.holder.position.x = shift;
+    this.propRoot.position.x = shift;
+  }
+
+  /**
+   * Convert a world-space translation delta into the local coordinate space
+   * of an attachment bone so dragging the 3D gizmo on an attached prop moves
+   * it in the exact screen/world direction of the gizmo handle.
+   */
+  worldDeltaToAttachmentLocal(attach: PropAttachment, worldDelta: Vec3): Vec3 {
+    const rig = this.rigs.get(attach.playerId);
+    if (!rig) return worldDelta;
+    const bone = getRigAttachmentBone(rig, attach.slot);
+    bone.updateWorldMatrix(true, false);
+    const quat = new Quaternion();
+    const scale = new Vector3();
+    bone.getWorldQuaternion(quat);
+    bone.getWorldScale(scale);
+    const local = new Vector3(worldDelta.x, worldDelta.y, worldDelta.z).applyQuaternion(quat.invert());
+    return {
+      x: Math.abs(scale.x) > 1e-5 ? local.x / scale.x : local.x,
+      y: Math.abs(scale.y) > 1e-5 ? local.y / scale.y : local.y,
+      z: Math.abs(scale.z) > 1e-5 ? local.z / scale.z : local.z,
+    };
+  }
+
+  /** Return the world-space axis vector of a gizmo axis (`x`, `y`, or `z`). */
+  getGizmoWorldAxis(axis: Axis): Vec3 {
+    const v = this.gizmo.worldAxis(axis);
+    return { x: v.x, y: v.y, z: v.z };
   }
 
   setGizmoOptions(options: { mode: GizmoMode; space: Space; snap: boolean; enabled: boolean; target?: MoveTarget | null }) {
@@ -930,8 +997,9 @@ export class StudioEngine {
     this.gizmo.setCaptureHidden(!visible);
     const active = this.draft?.activePropId;
     for (const [id, group] of this.propGroups) {
+      const prop = this.draft?.props.find((item) => item.id === id);
       const marker = group.getObjectByName("marker");
-      if (marker) marker.visible = visible && id === active;
+      if (marker) marker.visible = visible && id === active && !prop?.attach;
     }
   }
 
@@ -1023,6 +1091,7 @@ export class StudioEngine {
       scene: this.scene,
       camera: this.camera,
       holder: this.holder,
+      propRoot: this.propRoot,
       stage: this.stage,
       draft: this.draft,
       rigs: this.rigs.values(),

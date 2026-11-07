@@ -1,6 +1,7 @@
 import type { Vec3 } from "./model-types.ts";
 import type { PropAttachment, PropAttachSlot, SceneProp } from "./types.ts";
-import { normalizeCatalogId } from "./catalog.ts";
+import { canonicalCatalogId, normalizeCatalogId } from "./catalog.ts";
+import { customAsset } from "./custom-assets.ts";
 
 export const PROP_ATTACH_SLOTS: ReadonlyArray<Exclude<PropAttachSlot, "world">> = ["rHand", "lHand", "head", "back"];
 
@@ -10,6 +11,187 @@ export const ATTACH_SLOT_OFFSETS: Record<Exclude<PropAttachSlot, "world">, Vec3>
   head: { x: 0, y: 8.5, z: 0 },
   back: { x: 0, y: 1, z: -2.5 },
 };
+
+export type PropDisplayArchetype =
+  | "handheld"
+  | "torch"
+  | "bow"
+  | "shield"
+  | "block"
+  | "generated"
+  | "entity";
+
+export type PropDisplayTransform = {
+  archetype: PropDisplayArchetype;
+  /** Model-space point that acts as the grip/center origin before rotation & scale. */
+  modelOrigin: Vec3;
+  /** Base position in the attachment bone's local coordinate space. */
+  position: Vec3;
+  /** Base Euler XYZ rotation in degrees applied around `modelOrigin`. */
+  rotation: Vec3;
+  /** Base uniform scale matching Minecraft's third-person display transform. */
+  scale: number;
+};
+
+const HANDHELD_ITEM_PATTERN = /(?:^|_)(?:sword|pickaxe|axe|shovel|hoe|mace|trident|stick|rod|brush)(?:$|_)/;
+const TORCH_BLOCK_PATTERN = /(?:^|_)(?:torch|end_rod|lightning_rod|candle|lantern)(?:$|_)/;
+
+/**
+ * Classify a prop into its Minecraft third-person display archetype so held
+ * weapons, torches, 3D blocks, and flat items each use the proper grip and scale.
+ */
+export function classifyPropDisplayArchetype(catalogId: string): PropDisplayArchetype {
+  const canonical = canonicalCatalogId(catalogId.trim());
+  if (canonical.startsWith("custom:")) {
+    const asset = customAsset(canonical);
+    if (asset?.kind === "block") return "block";
+    if (HANDHELD_ITEM_PATTERN.test(asset?.name?.toLowerCase() ?? "") || HANDHELD_ITEM_PATTERN.test(canonical.toLowerCase())) {
+      return "handheld";
+    }
+    return "generated";
+  }
+  if (canonical.startsWith("entity:")) return "entity";
+  if (canonical.startsWith("block:")) {
+    const bare = canonical.slice(6);
+    if (TORCH_BLOCK_PATTERN.test(bare)) return "torch";
+    return "block";
+  }
+  if (canonical.startsWith("item:")) {
+    const bare = canonical.slice(5);
+    if (bare === "shield") return "shield";
+    if (bare === "bow" || bare === "crossbow") return "bow";
+    if (HANDHELD_ITEM_PATTERN.test(bare)) return "handheld";
+    return "generated";
+  }
+  return "generated";
+}
+
+/**
+ * Return the Minecraft-aligned base display transform for a prop attached to a rig slot.
+ * User-configured `prop.position`, `prop.rotation`, and `prop.scale` act as fine-tune
+ * offsets on top of this base transform (so neutral user values are pos=0, rot=0, scale=1).
+ */
+export function getPropDisplayTransform(
+  catalogId: string,
+  slot: Exclude<PropAttachSlot, "world">,
+): PropDisplayTransform {
+  const archetype = classifyPropDisplayArchetype(catalogId);
+
+  if (slot === "head") {
+    if (archetype === "block") {
+      // Wearable full block helmet (like carved pumpkin / glass / TNT on head in MC)
+      return {
+        archetype,
+        modelOrigin: { x: 0, y: 8, z: 0 },
+        position: { x: 0, y: 4, z: 0 },
+        rotation: { x: 0, y: 0, z: 0 },
+        scale: 0.625,
+      };
+    }
+    return {
+      archetype,
+      modelOrigin: { x: 0, y: 0, z: 0 },
+      position: { x: 0, y: 8.2, z: 0 },
+      rotation: { x: 0, y: 0, z: 0 },
+      scale: 0.75,
+    };
+  }
+
+  if (slot === "back") {
+    if (archetype === "block") {
+      return {
+        archetype,
+        modelOrigin: { x: 0, y: 8, z: 0 },
+        position: { x: 0, y: 0, z: -3.8 },
+        rotation: { x: 0, y: 180, z: 0 },
+        scale: 0.5,
+      };
+    }
+    // Handheld weapons & items slung diagonally across the back
+    return {
+      archetype,
+      modelOrigin: { x: 0, y: 8, z: 0 },
+      position: { x: 0, y: 0.5, z: -2.6 },
+      rotation: { x: 0, y: 180, z: 0 },
+      scale: 0.85,
+    };
+  }
+
+  // rHand or lHand (parented to rig.rElbow / rig.lElbow)
+  switch (archetype) {
+    case "handheld":
+      // 2D extruded sprite has handle grip at (-4.5, 3.5, 0) and blade tip at (+6.5, 14.5, 0).
+      // Pivoting at (-4.5, 3.5, 0) with R_z(-65°) then R_y(-90°) places the flat blade in the
+      // forearm's YZ plane (x=0), locks the hilt inside the closed fist (0, -4.8, 0.8), and
+      // lets user rotations/scales pivot naturally around the fist grip.
+      return {
+        archetype,
+        modelOrigin: { x: -4.5, y: 3.5, z: 0 },
+        position: { x: 0, y: -4.8, z: 0.8 },
+        rotation: { x: 0, y: -90, z: -65 },
+        scale: 0.85,
+      };
+
+    case "torch":
+      // Torch stick spans y=0..10. Pivot at grip (0, 2.5, 0) and rotate +110° around X
+      // so the torch extends out the thumb side of the fist (+Z) and 20° along (-Y).
+      return {
+        archetype,
+        modelOrigin: { x: 0, y: 2.5, z: 0 },
+        position: { x: 0, y: -4.8, z: 1.0 },
+        rotation: { x: 110, y: 0, z: 0 },
+        scale: 0.85,
+      };
+
+    case "bow":
+      return {
+        archetype,
+        modelOrigin: { x: 0, y: 8, z: 0 },
+        position: { x: 0, y: -5.0, z: 2.0 },
+        rotation: { x: 0, y: -90, z: -45 },
+        scale: 0.9,
+      };
+
+    case "shield":
+      return {
+        archetype,
+        modelOrigin: { x: 0, y: 8, z: 0 },
+        position: { x: slot === "rHand" ? -2.6 : 2.6, y: -3.5, z: 1.5 },
+        rotation: { x: 90, y: 0, z: 0 },
+        scale: 0.85,
+      };
+
+    case "block":
+      // Vanilla models/block/block.json thirdperson_righthand: scale 0.375, rot [75, 45, 0]
+      return {
+        archetype,
+        modelOrigin: { x: 0, y: 8, z: 0 },
+        position: { x: 0, y: -5.2, z: 2.2 },
+        rotation: { x: 75, y: 45, z: 0 },
+        scale: 0.375,
+      };
+
+    case "entity":
+      return {
+        archetype,
+        modelOrigin: { x: 0, y: 0, z: 0 },
+        position: { x: 0, y: -5.2, z: 2.5 },
+        rotation: { x: 90, y: 0, z: 0 },
+        scale: 0.35,
+      };
+
+    case "generated":
+    default:
+      // Vanilla models/item/generated.json thirdperson_righthand: scale 0.55, YZ plane in hand
+      return {
+        archetype,
+        modelOrigin: { x: 0, y: 8, z: 0 },
+        position: { x: 0, y: -5.0, z: 2.0 },
+        rotation: { x: 0, y: -90, z: -20 },
+        scale: 0.55,
+      };
+  }
+}
 
 export const MAX_PROPS = 64;
 export const PROP_POSITION_LIMIT = 64;

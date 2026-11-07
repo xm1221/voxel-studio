@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { decodePayload, encodePayload, toPayload } from "../lib/persist.ts";
-import { MAX_PROPS, parseSceneProps, placeProp, propSlot, type PropParseIssue } from "../lib/props.ts";
+import {
+  classifyPropDisplayArchetype,
+  getPropDisplayTransform,
+  MAX_PROPS,
+  parseSceneProps,
+  placeProp,
+  propSlot,
+  type PropParseIssue,
+} from "../lib/props.ts";
 import { poseById } from "../lib/poses.ts";
 import { applyStarterScene, STARTER_SCENES } from "../lib/starter-scenes.ts";
 import { sceneFromPayload } from "../lib/studio-state.ts";
@@ -212,23 +220,70 @@ describe("scene props", () => {
     assert.equal(next.scene.props[0].attach?.playerId, "p_test");
   });
 
-  it("applies starter scenes while preserving character identity", () => {
-    assert.equal(STARTER_SCENES.length, 4);
+  it("computes Minecraft-aligned display transforms per item archetype and slot", () => {
+    assert.equal(classifyPropDisplayArchetype("item:diamond_sword"), "handheld");
+    assert.equal(classifyPropDisplayArchetype("item:diamond_pickaxe"), "handheld");
+    assert.equal(classifyPropDisplayArchetype("block:torch"), "torch");
+    assert.equal(classifyPropDisplayArchetype("block:grass_block"), "block");
+    assert.equal(classifyPropDisplayArchetype("item:apple"), "generated");
+    assert.equal(classifyPropDisplayArchetype("entity:creeper"), "entity");
+
+    const rSword = getPropDisplayTransform("item:diamond_sword", "rHand");
+    const lSword = getPropDisplayTransform("item:diamond_sword", "lHand");
+    assert.deepEqual(rSword.modelOrigin, { x: -4.5, y: 3.5, z: 0 });
+    assert.equal(rSword.scale, 0.85);
+    assert.equal(rSword.rotation.y, -90);
+    assert.equal(lSword.rotation.y, -90);
+    assert.equal(rSword.position.y, -4.8);
+
+    const rBlock = getPropDisplayTransform("block:grass_block", "rHand");
+    const lBlock = getPropDisplayTransform("block:grass_block", "lHand");
+    const headBlock = getPropDisplayTransform("block:grass_block", "head");
+    assert.equal(rBlock.scale, 0.375);
+    assert.equal(rBlock.rotation.y, 45);
+    assert.equal(lBlock.rotation.y, 45);
+    assert.equal(headBlock.scale, 0.625);
+
+    const rTorch = getPropDisplayTransform("block:torch", "rHand");
+    assert.equal(rTorch.rotation.x, 110);
+    assert.equal(rTorch.scale, 0.85);
+  });
+
+  it("applies starter scenes (single-player, multi-player, and custom animation) while preserving character identity", () => {
+    assert.equal(STARTER_SCENES.length, 6);
     const draft = scene();
     draft.players[0].name = "CustomHero";
     draft.players[0].model = "slim";
     draft.players[0].skinUrl = "https://custom.skin/hero.png";
-    const wilderness = STARTER_SCENES.find((s: any) => s.id === "wilderness-hero");
+    const wilderness = STARTER_SCENES.find((s) => s.id === "wilderness-hero");
     assert.ok(wilderness);
     const result = applyStarterScene(draft, wilderness);
     assert.equal(result.scene.players[0].name, "CustomHero");
     assert.equal(result.scene.players[0].model, "slim");
     assert.equal(result.scene.players[0].skinUrl, "https://custom.skin/hero.png");
     assert.equal(result.scene.players[0].poseId, "guard");
-    assert.equal(result.scene.props.length, 3);
+    assert.equal(result.scene.props.length, 5);
     assert.equal(result.scene.props[0].attach?.playerId, "p_test");
     assert.equal(result.scene.props[0].attach?.slot, "rHand");
     assert.equal(result.scene.background, "noon");
     assert.equal(result.poster.title, "WILDERNESS HERO");
+
+    // Multi-player starter template
+    const showdown = STARTER_SCENES.find((s) => s.id === "duo-showdown");
+    assert.ok(showdown);
+    const duoResult = applyStarterScene(draft, showdown, { skinUrl: "alex_skin", model: "slim", name: "Alex" });
+    assert.equal(duoResult.scene.players.length, 2);
+    assert.equal(duoResult.scene.players[0].name, "CustomHero");
+    assert.equal(duoResult.scene.players[1].name, "Alex");
+    const secondId = duoResult.scene.players[1].id;
+    assert.ok(duoResult.scene.props.some((p) => p.attach?.playerId === secondId && p.attach?.slot === "rHand"));
+
+    // Custom keyframe animation starter template
+    const combo = STARTER_SCENES.find((s) => s.id === "sword-combo");
+    assert.ok(combo);
+    const comboResult = applyStarterScene(draft, combo);
+    assert.equal(comboResult.scene.players[0].clip, "custom");
+    assert.ok(comboResult.scene.players[0].customAnimation);
+    assert.equal(comboResult.scene.players[0].customAnimation?.keyframes.length, 4);
   });
 });

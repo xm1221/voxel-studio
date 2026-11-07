@@ -10,6 +10,7 @@ export type CaptureHost = {
   scene: Scene;
   camera: PerspectiveCamera;
   holder: Group;
+  propRoot?: Group;
   stage: StageSet;
   draft: SceneDraft | null;
   rigs: Iterable<{ nametag: Mesh; bubble: Mesh; ring: Mesh }>;
@@ -34,7 +35,7 @@ function paintPoster(context: CanvasRenderingContext2D, paint: FramePaint, width
 
 /**
  * A small lateral nudge so layouts that reserve space for text do not sit on
- * top of the skin. Only the cast moves; the stage and camera stay put.
+ * top of the skin. Both the cast and scene props move together; the stage and camera stay put.
  */
 function subjectShiftFor(host: CaptureHost, paint: FramePaint, width: number, height: number) {
   const shift = posterSubjectShift(paint.poster, width, height);
@@ -71,6 +72,7 @@ export async function renderStill(
   host.setHeld(true);
   const rings = [...host.rigs].map((rig) => rig.ring.visible);
   const baseX = host.holder.position.x;
+  const basePropX = host.propRoot?.position.x ?? 0;
 
   try {
     for (const rig of host.rigs) rig.ring.visible = false;
@@ -79,7 +81,9 @@ export async function renderStill(
     host.camera.aspect = options.width / options.height;
     host.camera.updateProjectionMatrix();
     if (!options.transparent) host.stage.present(host.scene, host.renderer);
-    host.holder.position.x = baseX + subjectShiftFor(host, options, options.width, options.height);
+    const shift = subjectShiftFor(host, options, options.width, options.height);
+    host.holder.position.x = shift;
+    if (host.propRoot) host.propRoot.position.x = shift;
     host.poseAll(0, options.time ?? 0);
     host.renderer.render(host.scene, host.camera);
 
@@ -94,6 +98,7 @@ export async function renderStill(
     host.setMarkersVisible?.(true);
     restoreWorld(host, saved, ratio, viewW, viewH);
     host.holder.position.x = baseX;
+    if (host.propRoot) host.propRoot.position.x = basePropX;
     [...host.rigs].forEach((rig, index) => {
       rig.ring.visible = rings[index] ?? false;
     });
@@ -154,6 +159,7 @@ export async function renderMotionFrames(host: CaptureHost, options: MotionFrame
   const saved = snapshotWorld(host);
   const spin = host.holder.rotation.y;
   const baseX = host.holder.position.x;
+  const basePropX = host.propRoot?.position.x ?? 0;
   const rigs = [...host.rigs];
   const allStill = draft.players.every((player) => player.clip === "none");
   const rings = rigs.map((rig) => rig.ring.visible);
@@ -173,7 +179,9 @@ export async function renderMotionFrames(host: CaptureHost, options: MotionFrame
     host.camera.aspect = options.width / options.height;
     host.camera.updateProjectionMatrix();
     if (!options.transparent) host.stage.present(host.scene, host.renderer);
-    host.holder.position.x = baseX + subjectShiftFor(host, options, options.width, options.height);
+    const shift = subjectShiftFor(host, options, options.width, options.height);
+    host.holder.position.x = shift;
+    if (host.propRoot) host.propRoot.position.x = shift;
 
     for (let frame = 0; frame < options.frames; frame += 1) {
       if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
@@ -197,6 +205,7 @@ export async function renderMotionFrames(host: CaptureHost, options: MotionFrame
     host.setMarkersVisible?.(true);
     host.holder.rotation.y = spin;
     host.holder.position.x = baseX;
+    if (host.propRoot) host.propRoot.position.x = basePropX;
     restoreWorld(host, saved, ratio, viewW, viewH);
     rigs.forEach((rig, index) => {
       rig.ring.visible = rings[index] ?? false;

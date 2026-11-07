@@ -12,7 +12,7 @@ import {
   TextureLoader,
   type Texture,
 } from "three";
-import { catalogEntry, catalogTextureUrl, type CatalogEntry } from "./catalog.ts";
+import { catalogTextureUrl, resolveCatalogEntry, type CatalogEntry } from "./catalog.ts";
 import { customAsset } from "./custom-assets.ts";
 import { entityDef } from "./entities.ts";
 import { animatedFrame, entityQuads, geometryFromQuads, groupQuads, itemExtrusionQuads, modelQuads, type ModelQuad } from "./model-mesh.ts";
@@ -398,7 +398,7 @@ export function propSignature(catalogId: string) {
     const bytes = Object.values(custom.textures).reduce((sum, url) => sum + url.length, 0);
     return `custom:${custom.id}:${custom.model.elements.length}:${bytes}`;
   }
-  const entry = catalogEntry(catalogId);
+  const entry = resolveCatalogEntry(catalogId);
   if (entry?.kind === "entity") return `entity:${entry.id}`;
   if (entry?.model) return `model:${entry.id}:${entry.model.elements.length}:${entry.model.layers?.length ?? 0}`;
   if (entry) return `entry:${entry.id}`;
@@ -419,7 +419,7 @@ export function createPropGroup(catalogId: string) {
   if (custom) {
     addCompiledModel(visual, custom.model);
   } else {
-    const entry = catalogEntry(catalogId);
+    const entry = resolveCatalogEntry(catalogId);
     if (entry) {
       const built = buildProp(entry);
       const marker = built.getObjectByName("marker");

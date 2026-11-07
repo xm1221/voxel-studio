@@ -522,6 +522,31 @@ export function Studio() {
         if (!selected.has(prop.id) || prop.locked) return prop;
         const start = starts.find((item) => item.id === prop.id);
         if (!start) return prop;
+        if (prop.attach && (event.kind === "translate" || event.kind === "plane")) {
+          const fine = event.fine ? 0.25 : 1;
+          const worldDelta = { x: 0, y: 0, z: 0 };
+          if (event.kind === "translate") {
+            const axisVec = engine.getGizmoWorldAxis(event.axis);
+            worldDelta.x = axisVec.x * event.delta * fine;
+            worldDelta.y = axisVec.y * event.delta * fine;
+            worldDelta.z = axisVec.z * event.delta * fine;
+          } else {
+            const axisA = engine.getGizmoWorldAxis(event.axes[0]);
+            const axisB = engine.getGizmoWorldAxis(event.axes[1]);
+            worldDelta.x = (axisA.x * event.deltaA + axisB.x * event.deltaB) * fine;
+            worldDelta.y = (axisA.y * event.deltaA + axisB.y * event.deltaB) * fine;
+            worldDelta.z = (axisA.z * event.deltaA + axisB.z * event.deltaB) * fine;
+          }
+          const localDelta = engine.worldDeltaToAttachmentLocal(prop.attach, worldDelta);
+          const snapStep = event.snap ? 1 : 0.01;
+          const roundStep = (v: number) => Math.round(v / snapStep) * snapStep;
+          const nextPos = clampPosition({
+            x: roundStep(start.position.x + localDelta.x),
+            y: roundStep(start.position.y + localDelta.y),
+            z: roundStep(start.position.z + localDelta.z),
+          });
+          return { ...prop, position: nextPos };
+        }
         const transformed = gizmoTransform(start, event);
         return { ...prop, position: transformed.position, rotation: transformed.rotation, scale: transformed.scale };
       });
@@ -565,25 +590,28 @@ export function Studio() {
           return;
         }
       }
-      if (key === "v" || key === "g") setGizmoMode("move");
-      if (key === "r") setGizmoMode("rotate");
-      if (!meta && key === "s") setGizmoMode("scale");
+      if (key === "v" || key === "g") {
+        if (panelRef.current === "cast") setMoveMode(true);
+        setGizmoMode("move");
+      }
+      if (key === "r") {
+        if (panelRef.current === "cast") setMoveMode(true);
+        setGizmoMode("rotate");
+      }
+      if (!meta && key === "s") {
+        if (panelRef.current === "cast") setMoveMode(true);
+        setGizmoMode("scale");
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const activeId = active?.id ?? null;
   useEffect(() => {
     const engine = engineRef.current;
     if (!engine) return;
-    if (!moveMode || panel === "props") {
-      engine.setMoveTarget(null);
-      return;
-    }
-    if (activeId) engine.setMoveTarget({ kind: "player", id: activeId });
-    else engine.setMoveTarget(null);
-  }, [activeId, moveMode, panel]);
+    engine.setMoveTarget(null);
+  }, []);
 
   useEffect(() => {
     const engine = engineRef.current;
@@ -594,7 +622,7 @@ export function Studio() {
     if (panel === "props" && currentProp && !currentProp.hidden && !currentProp.locked) {
       target = { kind: "prop", id: currentProp.id };
       enabled = true;
-    } else if (panel === "cast" && scene.activeId) {
+    } else if (panel === "cast" && moveMode && scene.activeId) {
       target = { kind: "player", id: scene.activeId };
       enabled = true;
     }
@@ -605,7 +633,7 @@ export function Studio() {
       enabled,
       target,
     });
-  }, [gizmoMode, gizmoSnap, gizmoSpace, panel, scene]);
+  }, [gizmoMode, gizmoSnap, gizmoSpace, moveMode, panel, scene]);
 
   useEffect(() => {
     const el = viewRef.current;
@@ -680,6 +708,7 @@ export function Studio() {
   }, [active?.poseId]);
 
   function applyPose(poseId: string, joints: Joints) {
+    rememberSnapshot();
     const shouldResetClip = active && FULL_BODY_CLIPS.has(active.clip);
     updateActive({
       poseId,
@@ -698,6 +727,7 @@ export function Studio() {
   }
 
   function applyUserPreset(preset: UserPreset) {
+    rememberSnapshot();
     const shouldResetClip = active && FULL_BODY_CLIPS.has(active.clip);
     patch((current) => ({
       ...current,
@@ -801,6 +831,7 @@ export function Studio() {
   }
 
   function resetActivePlayer() {
+    rememberSnapshot();
     patch((current) => ({
       ...current,
       players: current.players.map((player) => (player.id === current.activeId ? resetPlayer(player) : player)),
@@ -809,6 +840,7 @@ export function Studio() {
   }
 
   function resetSceneToDefault() {
+    rememberSnapshot();
     patch((current) => resetSceneLook(current));
     setMessage(note("resetSceneDone"));
   }
@@ -1297,6 +1329,7 @@ export function Studio() {
 
   function applyPack(pack: ScenePack) {
     if (!scene) return;
+    rememberSnapshot();
     patch((current) => applyScenePack(current, pack));
     engineRef.current?.setCamera(pack.camera);
     setMessage(note("scenePackApplied", { name: ui(locale, `pack.${pack.id}`) }));
@@ -1304,8 +1337,10 @@ export function Studio() {
 
   function applyStarter(template: StarterScene) {
     if (!scene) return;
-    rememberProps();
-    const result = applyStarterScene(scene, template);
+    rememberSnapshot();
+    const skins = ensureSkins();
+    const fallbackSecond = skins ? { skinUrl: skins.alex, model: "slim" as const, name: "Alex" } : undefined;
+    const result = applyStarterScene(scene, template, fallbackSecond);
     patch(() => result.scene);
     setPoster(result.poster);
     engineRef.current?.setCamera(result.camera);
@@ -1667,11 +1702,43 @@ export function Studio() {
 
               <section className="block" hidden={panel !== "cast"}>
                 <h2>{tr("position")}</h2>
-                <div className="row">
+                <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
                   <button className={moveMode ? "chip active" : "chip"} type="button" onClick={() => setMoveMode((value) => !value)}>
                     {moveMode ? tr("moving") : tr("move")}
                   </button>
-                  <button className="btn ghost" type="button" onClick={() => updateActive({ position: { x: 0, y: 0, z: 0 }, yaw: 0, scale: 1 })}>
+                  {moveMode ? (
+                    <>
+                      <button
+                        type="button"
+                        className={gizmoMode === "move" ? "chip active" : "chip"}
+                        onClick={() => setGizmoMode("move")}
+                      >
+                        {tr("gizmoMove")}
+                      </button>
+                      <button
+                        type="button"
+                        className={gizmoMode === "rotate" ? "chip active" : "chip"}
+                        onClick={() => setGizmoMode("rotate")}
+                      >
+                        {tr("gizmoRotate")}
+                      </button>
+                      <button
+                        type="button"
+                        className={gizmoMode === "scale" ? "chip active" : "chip"}
+                        onClick={() => setGizmoMode("scale")}
+                      >
+                        {tr("gizmoScale")}
+                      </button>
+                    </>
+                  ) : null}
+                  <button
+                    className="btn ghost"
+                    type="button"
+                    onClick={() => {
+                      rememberSnapshot();
+                      updateActive({ position: { x: 0, y: 0, z: 0 }, yaw: 0, scale: 1 });
+                    }}
+                  >
                     {tr("recenter")}
                   </button>
                 </div>
