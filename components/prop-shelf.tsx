@@ -6,6 +6,7 @@ import {
   catalogEntries,
   catalogLabel,
   catalogTextureUrl,
+  LEGACY_IDS,
   loadedCatalog,
   loadCatalog,
   resolveCatalogEntry,
@@ -15,7 +16,7 @@ import {
 } from "@/lib/catalog";
 import { customFromPng, parseCustomFile, type CustomAsset } from "@/lib/custom-import";
 import type { GizmoMode } from "@/lib/gizmo";
-import { t, type Locale, type MessageKey } from "@/lib/i18n";
+import { isMessageKey, t, type Locale, type MessageKey } from "@/lib/i18n";
 import { FACE_NAMES, type FaceName } from "@/lib/model-types";
 import type { PropClip } from "@/lib/prop-clip";
 import type { Space } from "@/lib/transform-math";

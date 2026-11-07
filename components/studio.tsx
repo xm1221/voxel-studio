@@ -525,17 +525,15 @@ export function Studio() {
         if (prop.attach && (event.kind === "translate" || event.kind === "plane")) {
           const fine = event.fine ? 0.25 : 1;
           const worldDelta = { x: 0, y: 0, z: 0 };
-          if (event.kind === "translate") {
+          if (event.kind === "translate" && event.axis !== "all") {
             const axisVec = engine.getGizmoWorldAxis(event.axis);
-            worldDelta.x = axisVec.x * event.delta * fine;
-            worldDelta.y = axisVec.y * event.delta * fine;
-            worldDelta.z = axisVec.z * event.delta * fine;
-          } else {
-            const axisA = engine.getGizmoWorldAxis(event.axes[0]);
-            const axisB = engine.getGizmoWorldAxis(event.axes[1]);
-            worldDelta.x = (axisA.x * event.deltaA + axisB.x * event.deltaB) * fine;
-            worldDelta.y = (axisA.y * event.deltaA + axisB.y * event.deltaB) * fine;
-            worldDelta.z = (axisA.z * event.deltaA + axisB.z * event.deltaB) * fine;
+            worldDelta.x = axisVec.x * event.distance * fine;
+            worldDelta.y = axisVec.y * event.distance * fine;
+            worldDelta.z = axisVec.z * event.distance * fine;
+          } else if (event.kind === "plane") {
+            worldDelta.x = event.delta.x * fine;
+            worldDelta.y = event.delta.y * fine;
+            worldDelta.z = event.delta.z * fine;
           }
           const localDelta = engine.worldDeltaToAttachmentLocal(prop.attach, worldDelta);
           const snapStep = event.snap ? 1 : 0.01;

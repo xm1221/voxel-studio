@@ -1,4 +1,5 @@
 import { poseById } from "./poses.ts";
+import type { Vec3 } from "./model-types.ts";
 import type { PosterText } from "./poster.ts";
 import type {
   AnimationDef,
@@ -12,7 +13,6 @@ import type {
   PlayerDraft,
   SceneDraft,
   SceneProp,
-   Vec3,
 } from "./types.ts";
 
 export type StarterSceneId =
@@ -61,13 +61,18 @@ export type StarterScene = {
 };
 
 const SWORD_COMBO_ANIMATION: AnimationDef = {
+  v: 1,
   name: "Sword Combo",
   duration: 1.8,
   loop: true,
   keyframes: [
     {
       time: 0,
-      easing: "easeInOut",
+      bob: 0,
+      sway: 0,
+      roll: 0,
+      cape: 0,
+      ease: "ease-in-out",
       joints: {
         headX: 4,
         headY: -12,
@@ -86,7 +91,11 @@ const SWORD_COMBO_ANIMATION: AnimationDef = {
     },
     {
       time: 0.45,
-      easing: "easeIn",
+      bob: 0,
+      sway: 0,
+      roll: 0,
+      cape: 0,
+      ease: "smoothstep",
       joints: {
         headX: -8,
         headY: -24,
@@ -106,7 +115,11 @@ const SWORD_COMBO_ANIMATION: AnimationDef = {
     },
     {
       time: 0.85,
-      easing: "easeOut",
+      bob: -1.2,
+      sway: 0,
+      roll: 0,
+      cape: 0,
+      ease: "smoothstep",
       joints: {
         headX: 10,
         headY: 22,
@@ -122,12 +135,15 @@ const SWORD_COMBO_ANIMATION: AnimationDef = {
         lLegX: 34,
         lKnee: 18,
       },
-      bob: -1.2,
       yaw: 24,
     },
     {
       time: 1.35,
-      easing: "easeInOut",
+      bob: 0,
+      sway: 0,
+      roll: 0,
+      cape: 0,
+      ease: "ease-in-out",
       joints: {
         headX: -6,
         headY: 8,

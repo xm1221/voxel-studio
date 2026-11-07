@@ -237,11 +237,11 @@ export function sampleClip(clip: BuiltinClipId, time: number, rest: Joints): Cli
     roll = Math.cos(t + Math.PI) * 0.8;
     cape = 10 + Math.sin(t * 2) * 6;
   } else if (clip === "wave") {
-    const t = time * Math.PI;
-    joints.rArmX = -18;
-    joints.rArmZ = -146 + Math.sin(t) * 8;
-    joints.rElbow = -58 + Math.sin(t) * 24;
-    joints.headY = -12 + Math.sin(t) * 4;
+    const t = (time * Math.PI * 2) / clipCycle("wave");
+    joints.rArmX = -32;
+    joints.rArmZ = -115 + Math.sin(t * 2) * 6;
+    joints.rElbow = -42 + Math.sin(t * 2) * 24;
+    joints.headY = -12 + Math.sin(t * 2) * 4;
     joints.headX = rest.headX * 0.25 - 4;
     cape = Math.sin(t) * 2;
   } else if (clip === "cheer") {
@@ -258,51 +258,58 @@ export function sampleClip(clip: BuiltinClipId, time: number, rest: Joints): Cli
     bob = Math.abs(Math.sin(t)) * 1.05;
     cape = 4 + Math.sin(t * 2) * 3;
   } else if (clip === "crouch") {
-    // Sneak-walk: body pitched forward, knees bent, arms a little wide.
+    // Sneak-walk: stealth posture, continuous knee bend, arms steady for balance.
     const t = (time * Math.PI * 2) / clipCycle("crouch");
     const s = Math.sin(t);
     const c = Math.cos(t);
-    joints.bodyX = rest.bodyX + 14;
+    joints.bodyX = rest.bodyX + 16;
     joints.headX = rest.headX - 10;
-    joints.headY = rest.headY + s * 5;
-    joints.rArmX = rest.rArmX - 12 + s * 9;
-    joints.lArmX = rest.lArmX - 12 - s * 9;
-    joints.rArmZ = rest.rArmZ - 10 + c * 3;
-    joints.lArmZ = rest.lArmZ + 10 - c * 3;
-    joints.rElbow = rest.rElbow - 18 + Math.max(0, s) * 8;
-    joints.lElbow = rest.lElbow - 18 + Math.max(0, -s) * 8;
-    joints.rLegX = -38 - s * 14;
-    joints.lLegX = -38 + s * 14;
-    joints.rKnee = 62 + Math.max(0, -s) * 16;
-    joints.lKnee = 62 + Math.max(0, s) * 16;
-    bob = 0.9 + Math.abs(s) * 0.5;
-    sway = s * 0.3;
-    roll = c * 0.5;
+    joints.headY = rest.headY + s * 4;
+    joints.rArmX = rest.rArmX - 18 + s * 10;
+    joints.lArmX = rest.lArmX - 18 - s * 10;
+    joints.rArmZ = rest.rArmZ - 14 + c * 3;
+    joints.lArmZ = rest.lArmZ + 14 - c * 3;
+    joints.rElbow = rest.rElbow - 25;
+    joints.lElbow = rest.lElbow - 25;
+    joints.rLegX = -28 - s * 14;
+    joints.lLegX = -28 + s * 14;
+    joints.rKnee = 45 + Math.max(0, -s) * 14;
+    joints.lKnee = 45 + Math.max(0, s) * 14;
+    bob = 0.5 + Math.abs(s) * 0.35;
+    sway = s * 0.25;
+    roll = c * 0.4;
     cape = 2 + c * 2;
   } else if (clip === "attack") {
-    // Sword swing: raise behind the shoulder, cut down, recover. Hard cut in the middle.
+    // Sword slash: crisp windup above the shoulder, diagonal slash across front, smooth recovery.
     const u = (time / clipCycle("attack")) % 1;
-    const raise = smoothstep(Math.min(1, u / 0.32));
-    const cut = smoothstep(Math.max(0, Math.min(1, (u - 0.32) / 0.18)));
-    const back = smoothstep(Math.max(0, Math.min(1, (u - 0.5) / 0.5)));
-    const rArmX = mix(mix(rest.rArmX, -152, raise), 48, cut);
-    joints.rArmX = mix(rArmX, rest.rArmX, back);
-    const rArmZ = mix(mix(rest.rArmZ, -12, raise), 22, cut);
-    joints.rArmZ = mix(rArmZ, rest.rArmZ, back);
-    const rElbow = mix(mix(rest.rElbow, -78, raise), -6, cut);
-    joints.rElbow = mix(rElbow, rest.rElbow, back);
-    joints.lArmX = rest.lArmX - 16 * cut;
-    joints.lArmZ = rest.lArmZ + 14 * cut;
-    joints.bodyX = rest.bodyX + 9 * cut - 4 * raise;
-    joints.headX = rest.headX + 4 * cut;
-    joints.headY = rest.headY - 14 * cut;
-    joints.rLegX = rest.rLegX - 12 * cut;
-    joints.lLegX = rest.lLegX + 8 * cut;
-    joints.rKnee = rest.rKnee + 12 * cut;
-    bob = 0.35 * cut;
-    sway = 0.7 * cut;
-    roll = -1.4 * cut;
-    cape = 5 * cut;
+    const windup = pulse(u, 0, 0.30);
+    const slash = pulse(u, 0.28, 0.55);
+    const settle = pulse(u, 0.52, 0.95);
+
+    const rArmX = rest.rArmX - windup * 85 + slash * 45 - settle * 10;
+    joints.rArmX = rArmX;
+    const rArmZ = rest.rArmZ - windup * 22 + slash * 32 - settle * 6;
+    joints.rArmZ = rArmZ;
+    const rElbow = rest.rElbow - windup * 42 - slash * 18 - settle * 8;
+    joints.rElbow = rElbow;
+
+    joints.lArmX = rest.lArmX + slash * 25 - windup * 10;
+    joints.lArmZ = rest.lArmZ + slash * 16;
+    joints.lElbow = rest.lElbow - slash * 20;
+
+    joints.bodyX = rest.bodyX + slash * 12 - windup * 4;
+    joints.headX = rest.headX + slash * 6;
+    joints.headY = rest.headY + slash * 14 - windup * 8;
+
+    joints.rLegX = rest.rLegX - slash * 16;
+    joints.lLegX = rest.lLegX + slash * 12;
+    joints.rKnee = rest.rKnee + slash * 18;
+    joints.lKnee = rest.lKnee + slash * 8;
+
+    bob = slash * 0.45;
+    sway = slash * 0.5;
+    roll = -slash * 1.2;
+    cape = slash * 8;
   } else if (clip === "fly") {
     // Elytra glide: torso forward, arms swept back, cape streaming.
     const t = (time * Math.PI * 2) / clipCycle("fly");
@@ -374,25 +381,28 @@ export function sampleClip(clip: BuiltinClipId, time: number, rest: Joints): Cli
     // Crouch, launch, float, land, settle. Starts and ends on the rest pose.
     const u = (time / clipCycle("jump")) % 1;
     const crouch = pulse(u, 0, 0.22);
-    const launch = pulse(u, 0.22, 0.34);
-    const air = pulse(u, 0.34, 0.78);
-    const land = pulse(u, 0.78, 0.9);
-    joints.bodyX = rest.bodyX + crouch * 16 - launch * 6 + air * 4 + land * 12;
-    joints.rArmX = rest.rArmX + crouch * 46 - launch * 120 - air * 96 + land * 34;
-    joints.lArmX = rest.lArmX + crouch * 46 - launch * 120 - air * 96 + land * 34;
-    joints.rArmZ = rest.rArmZ - air * 24;
-    joints.lArmZ = rest.lArmZ + air * 24;
-    joints.rElbow = rest.rElbow - air * 30 - land * 20;
-    joints.lElbow = rest.lElbow - air * 30 - land * 20;
-    joints.rLegX = rest.rLegX - crouch * 44 + air * 26 + land * 30;
-    joints.lLegX = rest.lLegX - crouch * 44 + air * 26 + land * 30;
-    joints.rKnee = rest.rKnee + crouch * 62 + air * 54 + land * 46;
-    joints.lKnee = rest.lKnee + crouch * 62 + air * 54 + land * 46;
-    joints.headX = rest.headX - crouch * 8 - air * 8 + land * 10;
-    bob = -crouch * 2.6 + air * 7.2 - land * 2.2;
+    const launch = pulse(u, 0.20, 0.36);
+    const air = pulse(u, 0.32, 0.78);
+    const land = pulse(u, 0.76, 0.94);
+
+    joints.bodyX = rest.bodyX + crouch * 14 - launch * 6 + air * 4 + land * 10;
+    joints.rArmX = rest.rArmX + crouch * 34 - launch * 65 - air * 35 + land * 24;
+    joints.lArmX = rest.lArmX + crouch * 34 - launch * 65 - air * 35 + land * 24;
+    joints.rArmZ = rest.rArmZ - air * 28 - launch * 18;
+    joints.lArmZ = rest.lArmZ + air * 28 + launch * 18;
+    joints.rElbow = rest.rElbow - air * 24 - land * 18;
+    joints.lElbow = rest.lElbow - air * 24 - land * 18;
+
+    joints.rLegX = rest.rLegX - crouch * 28 - air * 16 + land * 22;
+    joints.lLegX = rest.lLegX - crouch * 28 + air * 10 + land * 22;
+    joints.rKnee = rest.rKnee + crouch * 38 + air * 26 + land * 32;
+    joints.lKnee = rest.lKnee + crouch * 38 + air * 22 + land * 32;
+
+    joints.headX = rest.headX - crouch * 6 - air * 8 + land * 8;
+    bob = -crouch * 2.2 + air * 6.5 - land * 1.8;
     sway = 0;
     roll = 0;
-    cape = crouch * 2 + air * 14 - land * 2;
+    cape = crouch * 2 + air * 12 - land * 2;
   } else if (clip === "sit") {
     // Seated loop on top of the sit pose: breathing, dangling shins, quiet cape.
     const t = (time * Math.PI * 2) / clipCycle("sit");

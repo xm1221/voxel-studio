@@ -17,7 +17,7 @@ export const metadata: Metadata = {
   description: "在浏览器里摆姿势、打灯，把 Minecraft 皮肤导出成头像、封面和壁纸。",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh-CN" className={`${outfit.variable} ${fraunces.variable} h-full antialiased`}>
       <body className="min-h-full">{children}</body>
