@@ -7,10 +7,17 @@ const LOCAL = 0x04034b50;
 /** Read a zip. Only entries accepted by `include` are inflated. */
 export async function readZip(
   data: Uint8Array,
-  options?: { include?: (name: string) => boolean; maxEntryBytes?: number },
+  options?: {
+    include?: (name: string) => boolean;
+    maxEntryBytes?: number;
+    maxTotalBytes?: number;
+    maxEntries?: number;
+  },
 ): Promise<ZipEntry[]> {
   const include = options?.include ?? (() => true);
   const maxEntryBytes = options?.maxEntryBytes ?? 8 * 1024 * 1024;
+  const maxTotalBytes = options?.maxTotalBytes ?? 64 * 1024 * 1024;
+  const maxEntries = options?.maxEntries ?? 4096;
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
   const eocd = findEocd(data);
   if (eocd < 0) throw new Error("bad zip");
@@ -19,6 +26,7 @@ export async function readZip(
   if (count > 20000 || offset === 0xffffffff || offset > data.length) throw new Error("bad zip");
 
   const entries: ZipEntry[] = [];
+  let totalInflated = 0;
   let cursor = offset;
   for (let index = 0; index < count; index += 1) {
     if (cursor + 46 > data.length || view.getUint32(cursor, true) !== CENTRAL) throw new Error("bad zip");
@@ -36,14 +44,19 @@ export async function readZip(
     if (encrypted || !include(name) || name.endsWith("/")) continue;
     if (uncompressed > maxEntryBytes || compressed > maxEntryBytes) continue;
     if (method !== 0 && method !== 8) continue;
+    // The declared sizes are attacker-controlled, so a hostile ratio is rejected outright.
+    if (compressed > 0 && uncompressed / compressed > 200) throw new Error("err.entryTooBig");
     if (localOffset + 30 > data.length || view.getUint32(localOffset, true) !== LOCAL) throw new Error("bad zip");
     const localName = view.getUint16(localOffset + 26, true);
     const localExtra = view.getUint16(localOffset + 28, true);
     const start = localOffset + 30 + localName + localExtra;
     if (start + compressed > data.length) throw new Error("bad zip");
     const slice = data.subarray(start, start + compressed);
-    const bytes = method === 0 ? slice.slice() : await inflateRaw(slice);
+    const bytes = method === 0 ? slice.slice() : await inflateRaw(slice, maxEntryBytes);
     if (bytes.byteLength > maxEntryBytes) continue;
+    if (totalInflated + bytes.byteLength > maxTotalBytes) throw new Error("err.packTooBig");
+    totalInflated += bytes.byteLength;
+    if (entries.length >= maxEntries) throw new Error("err.tooManyEntries");
     entries.push({ name, bytes });
   }
   return entries;
@@ -61,18 +74,25 @@ function findEocd(data: Uint8Array) {
   return -1;
 }
 
-async function inflateRaw(data: Uint8Array) {
+async function inflateRaw(data: Uint8Array, budget: number) {
   const stream = new DecompressionStream("deflate-raw");
   const copy = new Uint8Array(data.byteLength);
   copy.set(data);
   const writer = stream.writable.getWriter();
   const reader = stream.readable.getReader();
   const writing = writer.write(copy).then(() => writer.close());
+  // Aborting below tears the stream down, which rejects this promise; keep it handled.
+  writing.catch(() => {});
   const chunks: Uint8Array[] = [];
   let length = 0;
   for (;;) {
     const step = await reader.read();
     if (step.done) break;
+    if (length + step.value.byteLength > budget) {
+      await reader.cancel();
+      await writer.close().catch(() => {});
+      throw new Error("err.entryTooBig");
+    }
     chunks.push(step.value);
     length += step.value.byteLength;
   }

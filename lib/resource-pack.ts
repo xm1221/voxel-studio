@@ -73,6 +73,7 @@ const ALIASES: Record<string, { key: PropTextureKey; rank: number }> = {
 
 export const MAX_PACK_BYTES = 256 * 1024 * 1024;
 export const MAX_TEXTURE_BYTES = 8 * 1024 * 1024;
+export const MAX_PACK_INFLATED_BYTES = 64 * 1024 * 1024;
 
 export type PackTexture = { key: PropTextureKey; bytes: Uint8Array };
 
@@ -121,6 +122,7 @@ export async function readResourcePack(file: PackFile): Promise<{ name: string; 
     entries = await readZip(new Uint8Array(await file.arrayBuffer()), {
       include: (name) => classifyPackPath(name) !== null,
       maxEntryBytes: MAX_TEXTURE_BYTES,
+      maxTotalBytes: MAX_PACK_INFLATED_BYTES,
     });
   } catch (reason) {
     if (reason instanceof Error && reason.message.startsWith("err.")) throw reason;
