@@ -73,6 +73,8 @@ const ALIASES: Record<string, { key: PropTextureKey; rank: number }> = {
 
 export const MAX_PACK_BYTES = 256 * 1024 * 1024;
 export const MAX_TEXTURE_BYTES = 8 * 1024 * 1024;
+export const MAX_TEXTURE_DIMENSION = 512;
+export const MAX_TEXTURE_PIXELS = 512 * 512;
 export const MAX_PACK_INFLATED_BYTES = 64 * 1024 * 1024;
 
 export type PackTexture = { key: PropTextureKey; bytes: Uint8Array };
@@ -80,6 +82,24 @@ export type PackTexture = { key: PropTextureKey; bytes: Uint8Array };
 export type PackFile = { name: string; size: number; arrayBuffer: () => Promise<ArrayBuffer> };
 
 const PNG = [0x89, 0x50, 0x4e, 0x47] as const;
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
+const IHDR = [0x49, 0x48, 0x44, 0x52] as const;
+
+/** Width and height from the PNG IHDR chunk, or null when the bytes are not a PNG header. */
+export function pngSize(bytes: Uint8Array): { width: number; height: number } | null {
+  if (bytes.byteLength < 24) return null;
+  if (!PNG_SIGNATURE.every((value, index) => bytes[index] === value)) return null;
+  if (!IHDR.every((value, index) => bytes[12 + index] === value)) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return { width: view.getUint32(16), height: view.getUint32(20) };
+}
+
+function acceptableTextureSize(bytes: Uint8Array): boolean {
+  const size = pngSize(bytes);
+  if (!size) return false;
+  if (size.width > MAX_TEXTURE_DIMENSION || size.height > MAX_TEXTURE_DIMENSION) return false;
+  return size.width * size.height <= MAX_TEXTURE_PIXELS;
+}
 
 export function classifyPackPath(path: string): { key: PropTextureKey; rank: number } | null {
   const normalized = path.replaceAll("\\", "/").toLowerCase();
@@ -107,6 +127,7 @@ export function texturesFromPackFiles(entries: Array<{ path: string; bytes: Uint
     const classified = classifyPackPath(entry.path);
     if (!classified) continue;
     if (!isPng(entry.bytes) || entry.bytes.byteLength > MAX_TEXTURE_BYTES) continue;
+    if (!acceptableTextureSize(entry.bytes)) continue;
     const current = best.get(classified.key);
     if (current && current.rank >= classified.rank) continue;
     best.set(classified.key, { rank: classified.rank, bytes: entry.bytes });
@@ -139,7 +160,9 @@ export async function texturesFromFolder(files: PackFile[]): Promise<PackTexture
     if (file.size > MAX_TEXTURE_BYTES) continue;
     const path = file.name;
     if (!classifyPackPath(path)) continue;
-    entries.push({ path, bytes: new Uint8Array(await file.arrayBuffer()) });
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (!acceptableTextureSize(bytes)) continue;
+    entries.push({ path, bytes });
   }
   return texturesFromPackFiles(entries);
 }

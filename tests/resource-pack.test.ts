@@ -6,7 +6,23 @@ import { readResourcePack, texturesFromPackFiles, vanillaFallbackKeys } from "..
 import { defaultScene } from "../lib/studio-state.ts";
 import { readZip } from "../lib/unzip.ts";
 
-const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+function pngHeader(width: number, height: number) {
+  const header = Buffer.alloc(33);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header, 0);
+  header.writeUInt32BE(13, 8);
+  header.write("IHDR", 12, "ascii");
+  header.writeUInt32BE(width, 16);
+  header.writeUInt32BE(height, 20);
+  header[24] = 8;
+  header[25] = 6;
+  header.writeUInt32BE(0, 29);
+  // The last byte distinguishes this fixture from a differently-suffixed one in
+  // the ranking test below; the original 12-byte stub ended with 4 as well.
+  header[32] = 4;
+  return header;
+}
+
+const PNG = pngHeader(16, 16);
 
 function u16(value: number) {
   const bytes = Buffer.alloc(2);
@@ -20,7 +36,7 @@ function u32(value: number) {
   return bytes;
 }
 
-function buildZip(files: Array<{ name: string; data: Buffer; method: 0 | 8 }>) {
+function buildZip(files: Array<{ name: string; data: Buffer; method: 0 | 8; declaredUncompressed?: number }>) {
   const locals: Buffer[] = [];
   const centrals: Buffer[] = [];
   let offset = 0;
@@ -53,7 +69,7 @@ function buildZip(files: Array<{ name: string; data: Buffer; method: 0 | 8 }>) {
       u16(0),
       u32(crc),
       u32(stored.length),
-      u32(file.data.length),
+      u32(file.declaredUncompressed ?? file.data.length),
       u16(name.length),
       u16(0),
       u16(0),
@@ -177,5 +193,47 @@ describe("resource pack textures", () => {
     const payload = toPayload(defaultScene("skin"), undefined, true);
     assert.equal("pack" in payload, false);
     assert.equal(JSON.stringify(payload).includes("resource"), false);
+  });
+});
+
+describe("resource pack texture size limits", () => {
+  it("skips a texture whose IHDR claims an oversized image", () => {
+    const huge = pngHeader(20000, 20000);
+    const ok = pngHeader(64, 64);
+    const textures = texturesFromPackFiles([
+      { path: "pack/assets/minecraft/textures/block/stone.png", bytes: huge },
+      { path: "pack/assets/minecraft/textures/block/dirt.png", bytes: ok },
+    ]);
+    // The bomb is dropped, the sane texture still loads.
+    assert.deepEqual(textures.map((texture) => texture.key), ["block/dirt.png"]);
+  });
+
+  it("rejects a non-IHDR payload that only carries the PNG signature", () => {
+    const stub = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+    assert.throws(() => texturesFromPackFiles([{ path: "pack/assets/minecraft/textures/block/stone.png", bytes: stub }]), /err\.packEmpty/);
+  });
+
+  it("rejects a texture wider than the dimension cap even at a small pixel count", () => {
+    const wide = pngHeader(4096, 2);
+    assert.throws(() => texturesFromPackFiles([{ path: "pack/assets/minecraft/textures/block/stone.png", bytes: wide }]), /err\.packEmpty/);
+  });
+});
+
+describe("zip inflation limits", () => {
+  it("aborts an entry that inflates past the per-entry budget", async () => {
+    // 8 MiB of zeros deflates to a few KiB but declares 0 uncompressed bytes,
+    // which is exactly the shape the central-directory pre-filter used to trust.
+    const zip = buildZip([
+      { name: "assets/minecraft/textures/block/stone.png", data: Buffer.alloc(8 * 1024 * 1024, 0), method: 8, declaredUncompressed: 0 },
+    ]);
+    await assert.rejects(() => readZip(zip, { include: () => true, maxEntryBytes: 32 * 1024, maxTotalBytes: 64 * 1024 }), /err\.entryTooBig/);
+  });
+
+  it("aborts when the archive inflates past the total budget", async () => {
+    const zip = buildZip([
+      { name: "a.png", data: Buffer.alloc(1024 * 1024, 0), method: 8, declaredUncompressed: 0 },
+      { name: "b.png", data: Buffer.alloc(1024 * 1024, 0), method: 8, declaredUncompressed: 0 },
+    ]);
+    await assert.rejects(() => readZip(zip, { include: () => true, maxEntryBytes: 4 * 1024 * 1024, maxTotalBytes: 1024 * 1024 }), /err\.packTooBig/);
   });
 });
