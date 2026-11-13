@@ -60,6 +60,21 @@ function positionPart(value: unknown, fallback: number, min: number, max: number
   return numberInRange(value, min, max, fallback);
 }
 
+/** Belt and braces for links: a camera only survives as two finite 3-number tuples. */
+function cameraSnapshot(value: unknown): CameraSnapshot | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as { p?: unknown; t?: unknown };
+  const tuple = (entry: unknown): [number, number, number] | null =>
+    Array.isArray(entry) &&
+    entry.length === 3 &&
+    entry.every((part) => typeof part === "number" && Number.isFinite(part))
+      ? (entry as [number, number, number])
+      : null;
+  const p = tuple(record.p);
+  const t = tuple(record.t);
+  return p && t ? { p, t } : undefined;
+}
+
 export function sceneFromPayload(payload: SharePayload, steve: string, alex: string): { scene: SceneDraft; camera?: CameraSnapshot; refetch: string[] } {
   const refetch: string[] = [];
   const players = payload.players.slice(0, 4).map((player, index) => {
@@ -99,7 +114,7 @@ export function sceneFromPayload(payload: SharePayload, steve: string, alex: str
   const activeId = players.some((player) => player.id === payload.activeId) ? payload.activeId : players[0].id;
   const props = parseSceneProps(payload.props);
   return {
-    camera: payload.camera,
+    camera: cameraSnapshot(payload.camera),
     refetch,
     scene: {
       players,

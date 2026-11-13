@@ -208,3 +208,49 @@ describe("pose url serialization", () => {
     assert.ok(span.frames >= 12 && span.frames <= 28);
   });
 });
+
+describe("share payload hardening", () => {
+  const joints = Object.fromEntries(
+    ["headX", "headY", "bodyX", "rArmX", "rArmZ", "rElbow", "lArmX", "lArmZ", "lElbow", "rLegX", "rKnee", "lLegX", "lKnee"].map((key) => [key, 0]),
+  );
+  const base = { v: 1, activeId: "p1", players: [{ id: "p1", name: "A", username: "A", joints }] };
+
+  it("normalises an unknown light enum instead of passing it to the renderer", () => {
+    const payload = decodePayload(encodePayload({ ...base, light: "bogus" } as never));
+    assert.equal(payload?.light, "soft");
+  });
+
+  it("drops a camera that is not two finite three-number tuples", () => {
+    const missing = decodePayload(encodePayload({ ...base, camera: { p: [1, 2, 3] } } as never));
+    assert.equal(missing?.camera, undefined);
+    const short = decodePayload(encodePayload({ ...base, camera: { p: [1, 2], t: [0, 0, 0] } } as never));
+    assert.equal(short?.camera, undefined);
+    const good = decodePayload(encodePayload({ ...base, camera: { p: [1, 2, 3], t: [0, 0, 0] } } as never));
+    assert.deepEqual(good?.camera, { p: [1, 2, 3], t: [0, 0, 0] });
+  });
+
+  it("keeps only https and image data URLs on a share link", () => {
+    const drop = (url: string) =>
+      decodePayload(encodePayload({ ...base, players: [{ ...base.players[0], skinUrl: url }] } as never))?.players[0].skinUrl;
+    assert.equal(drop("javascript:alert(1)"), undefined);
+    assert.equal(drop("http://evil.test/x.png"), undefined);
+    assert.equal(drop("data:text/html,<b>x</b>"), undefined);
+    assert.equal(drop("https://textures.minecraft.net/x"), "https://textures.minecraft.net/x");
+    assert.equal(drop("data:image/png;base64,AAAA"), "data:image/png;base64,AAAA");
+  });
+
+  it("clamps key intensity and falls back on unknown stage enums", () => {
+    const payload = decodePayload(encodePayload({ ...base, keyIntensity: 9999, background: "lava", grade: "x", outline: "y", formatId: "nonsense" } as never));
+    assert.equal(payload?.keyIntensity, 1.6);
+    assert.equal(payload?.background, "studio");
+    assert.equal(payload?.grade, "clean");
+    assert.equal(payload?.outline, "none");
+    assert.equal(payload?.formatId, "youtube");
+  });
+
+  it("still returns null for a structurally broken payload", () => {
+    assert.equal(decodePayload(encodePayload({ v: 2, players: base.players } as never)), null);
+    assert.equal(decodePayload(encodePayload({ v: 1, players: [] } as never)), null);
+    assert.equal(decodePayload(encodePayload({ v: 1, players: [{ id: "p1" }] } as never)), null);
+  });
+});

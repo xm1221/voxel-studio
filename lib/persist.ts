@@ -1,5 +1,7 @@
+import { EXPORT_FORMAT_IDS } from "./formats.ts";
 import { CLIPS, animationDocument, parseAnimationDocument } from "./motion.ts";
 import type { PropClip } from "./prop-clip.ts";
+import { BACKGROUND_IDS, GRADE_IDS, LIGHT_IDS, OUTLINE_IDS } from "./scene-doc.ts";
 import { scenePackById } from "./scene-packs.ts";
 import type { AnimationDef, BackgroundFit, CameraSnapshot, ClipId, Joints, LayerMode, PlayerDraft, SceneDraft, SceneProp } from "./types";
 
@@ -17,6 +19,73 @@ export function clipIdFrom(value: unknown, fallback: ClipId): ClipId {
 
 function numberInRange(value: unknown, min: number, max: number, fallback: number) {
   return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max ? value : fallback;
+}
+
+/** The studio slider ranges the light gain from 0.45 to 1.6. */
+const KEY_INTENSITY_MIN = 0.45;
+const KEY_INTENSITY_MAX = 1.6;
+const MAX_IMAGE_URL_LENGTH = 6_000_000;
+const MAX_TEXT_LENGTH = 64;
+
+function enumValue<T extends string>(value: unknown, ids: readonly T[], fallback: T): T {
+  return typeof value === "string" && (ids as readonly string[]).includes(value) ? (value as T) : fallback;
+}
+
+function textFrom(value: unknown, max = MAX_TEXT_LENGTH): string | null {
+  return typeof value === "string" ? value.slice(0, max) : null;
+}
+
+function keyIntensityFrom(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 1;
+  return Math.min(KEY_INTENSITY_MAX, Math.max(KEY_INTENSITY_MIN, value));
+}
+
+/** Only an https: URL (or an image data URL, length-capped) may ride in a link. */
+function imageUrlFrom(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > MAX_IMAGE_URL_LENGTH) return null;
+  if (value.startsWith("data:image/")) return value;
+  try {
+    return new URL(value).protocol === "https:" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function cameraTupleFrom(value: unknown): [number, number, number] | null {
+  if (!Array.isArray(value) || value.length !== 3) return null;
+  const [x, y, z] = value as unknown[];
+  if (typeof x !== "number" || !Number.isFinite(x)) return null;
+  if (typeof y !== "number" || !Number.isFinite(y)) return null;
+  if (typeof z !== "number" || !Number.isFinite(z)) return null;
+  return [x, y, z];
+}
+
+/** A camera needs two finite 3-number tuples; stray extras only survive when numeric. */
+function cameraFrom(value: unknown): CameraSnapshot | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  const p = cameraTupleFrom(record.p);
+  const t = cameraTupleFrom(record.t);
+  if (!p || !t) return undefined;
+  const camera: CameraSnapshot = { p, t };
+  for (const [key, entry] of Object.entries(record)) {
+    if (key === "p" || key === "t") continue;
+    if (typeof entry === "number" && Number.isFinite(entry)) (camera as unknown as Record<string, unknown>)[key] = entry;
+  }
+  return camera;
+}
+
+function playerFrom(value: Record<string, unknown>): PlayerPayload {
+  const player = { ...value } as unknown as PlayerPayload;
+  player.name = textFrom(value.name) ?? "";
+  player.username = textFrom(value.username);
+  const skinUrl = imageUrlFrom(value.skinUrl);
+  if (skinUrl) player.skinUrl = skinUrl;
+  else delete player.skinUrl;
+  const capeUrl = imageUrlFrom(value.capeUrl);
+  if (capeUrl) player.capeUrl = capeUrl;
+  else delete player.capeUrl;
+  return player;
 }
 
 export type SharePayload = {
@@ -185,15 +254,41 @@ export function decodePayload(value: string): SharePayload | null {
     const padded = value.replaceAll("-", "+").replaceAll("_", "/") + "=".repeat((4 - (value.length % 4)) % 4);
     const binary = atob(padded);
     const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-    const parsed = JSON.parse(new TextDecoder().decode(bytes)) as SharePayload;
+    const decoded: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) return null;
+    const parsed = decoded as SharePayload;
     if (parsed.v !== 1 || !Array.isArray(parsed.players) || parsed.players.length === 0) return null;
-    for (const player of parsed.players) {
-      if (!player.joints) return null;
+    const players: PlayerPayload[] = [];
+    for (const raw of parsed.players as unknown[]) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+      const player = raw as Record<string, unknown>;
+      const joints = player.joints as Record<string, unknown> | null | undefined;
+      if (!joints || typeof joints !== "object") return null;
       for (const key of JOINT_KEYS) {
-        if (typeof player.joints[key] !== "number" || Number.isNaN(player.joints[key])) return null;
+        if (typeof joints[key] !== "number" || Number.isNaN(joints[key])) return null;
       }
+      players.push(playerFrom(player));
     }
-    return parsed;
+    const payload: SharePayload = {
+      ...parsed,
+      activeId: textFrom(parsed.activeId) ?? "",
+      background: enumValue(parsed.background, BACKGROUND_IDS, "studio"),
+      grade: enumValue(parsed.grade, GRADE_IDS, "clean"),
+      outline: enumValue(parsed.outline, OUTLINE_IDS, "none"),
+      godrays: Boolean(parsed.godrays),
+      light: enumValue(parsed.light, LIGHT_IDS, "soft"),
+      keyIntensity: keyIntensityFrom(parsed.keyIntensity),
+      formatId: enumValue(parsed.formatId, EXPORT_FORMAT_IDS, "youtube"),
+      players,
+    };
+    const backgroundImage = imageUrlFrom(payload.backgroundImage);
+    if (backgroundImage) payload.backgroundImage = backgroundImage;
+    else delete payload.backgroundImage;
+    if (typeof payload.pack !== "string") delete payload.pack;
+    const camera = cameraFrom(payload.camera);
+    if (camera) payload.camera = camera;
+    else delete payload.camera;
+    return payload;
   } catch {
     return null;
   }
