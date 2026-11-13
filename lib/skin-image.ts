@@ -53,9 +53,17 @@ function convertLegacy(context: CanvasRenderingContext2D, width: number) {
   context.restore();
 }
 
+/** A Minecraft skin is 64x64 or a legacy 64x32; 256 leaves room for the odd double-resolution skin. */
+export const MAX_SKIN_DIMENSION = 256;
+
 export function loadSkinToCanvas(canvas: SkinCanvas, image: CanvasImageSource & { width: number; height: number }) {
   const legacy = image.width === image.height * 2;
   if (!legacy && image.width !== image.height) {
+    throw new Error("err.skinSize");
+  }
+  // The canvas is allocated from the decoded size, so refuse an absurd one before
+  // touching the 2D context: a 20000x20000 PNG would otherwise allocate gigabytes.
+  if (image.width > MAX_SKIN_DIMENSION || image.height > MAX_SKIN_DIMENSION) {
     throw new Error("err.skinSize");
   }
   const side = image.width;

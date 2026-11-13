@@ -50,6 +50,8 @@ let builtinSkins: { steve: string; alex: string } | null = null;
 let bootCamera: CameraSnapshot | undefined;
 let bootRefetch: string[] = [];
 let bootError: Note | null = null;
+/** A 64x64 PNG skin is a few KiB; anything past this is not a skin. */
+const MAX_SKIN_FILE_BYTES = 4 * 1024 * 1024;
 let bootSceneHandled = false;
 
 function isQuotaError(reason: unknown) {
@@ -1223,6 +1225,9 @@ export function Studio() {
     const loaded: PlayerDraft[] = [];
     for (const file of images.slice(0, 4)) {
       try {
+        // Reject before decoding: a skin is 64x64 (or a legacy 64x32), so a large
+        // file is never a real skin and decoding it is what costs the memory.
+        if (file.size > MAX_SKIN_FILE_BYTES) throw new Error(code("err.skinBig"));
         const url = await fileToDataUrl(file);
         const image = await loadImage(url);
         const canvas = document.createElement("canvas");
