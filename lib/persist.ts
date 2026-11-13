@@ -3,6 +3,8 @@ import type { PropClip } from "./prop-clip.ts";
 import { scenePackById } from "./scene-packs.ts";
 import type { AnimationDef, BackgroundFit, CameraSnapshot, ClipId, Joints, LayerMode, PlayerDraft, SceneDraft, SceneProp } from "./types";
 
+export const STORAGE_BACKUP_KEY = "pixelstage.v1.backup";
+
 export function layerModeFrom(value: unknown): LayerMode {
   return value === "voxel" ? "voxel" : "flat";
 }

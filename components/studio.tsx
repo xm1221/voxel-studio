@@ -9,7 +9,7 @@ import { StudioEngine, type MoveTarget } from "@/lib/engine";
 import { LOCALE_STORAGE_KEY, code, errorNote, htmlLang, note, parseNote, readLocale, t, type Locale, type MessageKey, type Note } from "@/lib/i18n";
 import { FORMATS, formatById } from "@/lib/formats";
 import { animationDocument, animationDownloadName, animationForClip, CLIPS, MAX_ANIMATION_TEXT_LENGTH, parseAnimationText } from "@/lib/motion";
-import { backgroundImageFrom, decodePayload, encodePayload, toPayload } from "@/lib/persist";
+import { STORAGE_BACKUP_KEY, backgroundImageFrom, decodePayload, encodePayload, toPayload } from "@/lib/persist";
 import { POSES, mirrorJoints, type PoseCategory } from "@/lib/poses";
 import { PRESET_STORAGE_KEY, mergePresets, newPresetId, parsePresetDocument, presetDocument, type UserPreset } from "@/lib/presets";
 import { inferModelType, loadImage, loadSkinToCanvas } from "@/lib/skin-image";
@@ -49,7 +49,13 @@ const FULL_BODY_CLIPS = new Set<string>(["walk", "run", "crouch", "attack", "fly
 let builtinSkins: { steve: string; alex: string } | null = null;
 let bootCamera: CameraSnapshot | undefined;
 let bootRefetch: string[] = [];
+let bootError: Note | null = null;
 let bootSceneHandled = false;
+
+function isQuotaError(reason: unknown) {
+  const name = reason && typeof reason === "object" && "name" in reason ? String((reason as { name: unknown }).name) : "";
+  return name === "QuotaExceededError" || name === "NS_ERROR_DOM_QUOTA_REACHED";
+}
 
 function decodeBase64Json(value: string) {
   const padded = value.replaceAll("-", "+").replaceAll("_", "/") + "=".repeat((4 - (value.length % 4)) % 4);
@@ -122,7 +128,13 @@ export function Studio() {
   const [query, setQuery] = useState("");
   const [locale, setLocale] = useState<Locale>(() => readLocale());
   const [message, setMessage] = useState<Note | null>(null);
-  const [error, setError] = useState<Note | null>(null);
+  // A damaged save is detected while the scene state is being initialised, so
+  // the recovery notice is seeded here rather than set from an effect.
+  const [error, setError] = useState<Note | null>(() => {
+    const pending = bootError;
+    bootError = null;
+    return pending;
+  });
   const [busy, setBusy] = useState(false);
   const [dropping, setDropping] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -192,6 +204,18 @@ export function Studio() {
       try {
         const raw = localStorage.getItem(STORAGE_KEY);
         stored = raw ? decodePayload(raw) : null;
+        if (raw && !stored) {
+          // The primary save is damaged or truncated. Try last-good before
+          // falling back to the default scene; the read must never throw out.
+          let backup: string | null = null;
+          try {
+            backup = localStorage.getItem(STORAGE_BACKUP_KEY);
+          } catch {
+            backup = null;
+          }
+          stored = backup ? decodePayload(backup) : null;
+          bootError = note(stored ? "err.saveRecovered" : "err.saveCorrupt");
+        }
       } catch {
         stored = null;
       }
@@ -391,9 +415,23 @@ export function Studio() {
     const handle = window.setTimeout(() => {
       try {
         const camera = engineRef.current?.getCamera();
-        localStorage.setItem(STORAGE_KEY, encodePayload(toPayload(scene, camera, true)));
-      } catch {
-        // Uploaded skins can be large. The session still works without local save.
+        const value = encodePayload(toPayload(scene, camera, true));
+        const previous = localStorage.getItem(STORAGE_KEY);
+        // Write the primary save first: a backup that fills the quota must never
+        // be the reason the real save fails. The previous value was decoded once
+        // when it was loaded, so it is known-good and needs no second decode.
+        localStorage.setItem(STORAGE_KEY, value);
+        if (previous && previous !== value) {
+          try {
+            localStorage.setItem(STORAGE_BACKUP_KEY, previous);
+          } catch {
+            // The backup is best-effort; the primary save already succeeded.
+          }
+        }
+      } catch (reason) {
+        // A failed setItem leaves the old value untouched, but the user needs
+        // to know that this change did not reach local storage.
+        setError(note(isQuotaError(reason) ? "err.saveQuota" : "err.saveFailed"));
       }
     }, 400);
     return () => window.clearTimeout(handle);
